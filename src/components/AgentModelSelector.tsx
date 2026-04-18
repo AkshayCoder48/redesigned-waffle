@@ -5,14 +5,12 @@ import { cn } from '../utils/cn';
 
 interface AgentModelSelectorProps {
   agentId: string;
-  agentName: string;
   settings: Settings;
   onUpdateAssignment: (agentId: string, modelIds: string[]) => void;
 }
 
 export default function AgentModelSelector({
   agentId,
-  agentName,
   settings,
   onUpdateAssignment,
 }: AgentModelSelectorProps) {

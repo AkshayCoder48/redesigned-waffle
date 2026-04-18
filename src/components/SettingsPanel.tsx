@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Settings as SettingsIcon,
   X,
@@ -11,11 +11,10 @@ import {
   X as XIcon,
   Loader2,
   Trash2,
-  ChevronRight,
   Info,
   Shield,
 } from 'lucide-react';
-import { Settings, ConnectionType, ModelFile, ModelTestStatus } from '../types';
+import { Settings, ConnectionType, ModelFile } from '../types';
 import { testModel, type ModelTestResult } from '../utils/testModel';
 import { cn } from '../utils/cn';
 
@@ -44,10 +43,6 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
   const handleApiKeyChange = (value: string) => {
     updateSettings({ apiKey: value });
-  };
-
-  const handleApiBaseUrlChange = (value: string) => {
-    updateSettings({ apiBaseUrl: value });
   };
 
   const handleCustomModelIdChange = (value: string) => {
@@ -201,7 +196,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       <div className="text-[11px] text-zinc-500">Use GGUF/Safetensors</div>
                     </div>
                     {settings.connectionType === 'local' && (
-                      <Check className="ml-auto h-4 w-4 text-emerald-400" />
+                      <Check className="ml-auto h-4 w-4 text-cyan-400" />
                     )}
                   </button>
                   <button
@@ -222,7 +217,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       <div className="text-[11px] text-zinc-500">Use cloud models</div>
                     </div>
                     {settings.connectionType === 'openai' && (
-                      <Check className="ml-auto h-4 w-4 text-emerald-400" />
+                      <Check className="ml-auto h-4 w-4 text-cyan-400" />
                     )}
                   </button>
                 </div>
@@ -317,7 +312,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                             </div>
                           )}
                           {model.testStatus === 'passed' && (
-                            <div className="flex items-center gap-2 text-[11px] text-emerald-300">
+                            <div className="flex items-center gap-2 text-[11px] text-cyan-300">
                               <Check className="h-3 w-3" /> {model.testDetails || 'Model validated'}
                             </div>
                           )}
