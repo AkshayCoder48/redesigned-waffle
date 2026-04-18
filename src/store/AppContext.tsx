@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import { Agent, Task, Skill, Message, ActivityLog, ModelConfig, BackupInfo, AppMode, FileNode } from '../types';
+import React, { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
+import { Agent, Task, Skill, Message, ActivityLog, ModelConfig, BackupInfo, AppMode, FileNode, Settings } from '../types';
 
 interface AppState {
   currentView: string;
@@ -15,6 +15,7 @@ interface AppState {
   selectedProject: string | null;
   fileTree: FileNode[];
   terminalOutput: string[];
+  settings: Settings;
 }
 
 type Action =
@@ -31,7 +32,8 @@ type Action =
   | { type: 'ADD_BACKUP'; payload: BackupInfo }
   | { type: 'SET_EXECUTING'; payload: boolean }
   | { type: 'SET_TERMINAL_OUTPUT'; payload: string[] }
-  | { type: 'SET_FILE_TREE'; payload: FileNode[] };
+  | { type: 'SET_FILE_TREE'; payload: FileNode[] }
+  | { type: 'SET_SETTINGS'; payload: Settings };
 
 const defaultAgents: Agent[] = [
   { id: 'orchestrator', name: 'Orchestrator', type: 'primary', status: 'idle', icon: 'brain', description: 'Central intelligence layer - plans, coordinates, and manages all agent operations', progress: 0 },
@@ -65,6 +67,30 @@ const defaultFileTree: FileNode[] = [
   { name: 'package.json', type: 'file', path: '/package.json', content: '{ "name": "project" }' },
   { name: 'README.md', type: 'file', path: '/README.md', content: '# Project README' },
 ];
+
+const defaultSettings: Settings = {
+  connectionType: 'openai',
+  apiBaseUrl: 'https://api.openai.com/v1',
+  apiKey: '',
+  customModelId: 'gpt-4o',
+  localModels: [],
+  agentModelAssignments: {},
+};
+
+const loadSettingsFromStorage = (): Settings => {
+  if (typeof window === 'undefined') return defaultSettings;
+  try {
+    const saved = localStorage.getItem('ai-maos-settings');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Merge with defaults to handle new fields
+      return { ...defaultSettings, ...parsed };
+    }
+  } catch (error) {
+    console.error('Error loading settings from localStorage:', error);
+  }
+  return defaultSettings;
+};
 
 const initialState: AppState = {
   currentView: 'dashboard',
@@ -108,6 +134,7 @@ const initialState: AppState = {
     '✓ Database connected (RxDB local)',
     '✓ Ready for commands',
   ],
+  settings: loadSettingsFromStorage(),
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -146,6 +173,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, terminalOutput: action.payload };
     case 'SET_FILE_TREE':
       return { ...state, fileTree: action.payload };
+    case 'SET_SETTINGS':
+      return { ...state, settings: action.payload };
     default:
       return state;
   }
@@ -158,6 +187,16 @@ const AppContext = createContext<{
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  // Auto-save settings to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('ai-maos-settings', JSON.stringify(state.settings));
+    } catch (error) {
+      console.error('Error saving settings to localStorage:', error);
+    }
+  }, [state.settings]);
+
   return (
     <AppContext.Provider value={{ state, dispatch }}>
       {children}
