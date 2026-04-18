@@ -28,7 +28,11 @@ import {
   Trash2,
   Download,
   X,
+  Settings as SettingsIcon,
 } from 'lucide-react';
+import SettingsPanel from './components/SettingsPanel';
+import AgentsPanel from './components/AgentsPanel';
+import { useAppState } from './store/AppContext';
 
 type Message = {
   id: string;
@@ -37,6 +41,8 @@ type Message = {
   ts: number;
   attachments?: { type: 'image' | 'video' | 'audio' | 'file'; url: string; name?: string }[];
   tool?: { name: string; status: 'running' | 'done' | 'error'; detail?: string };
+  modelId?: string;
+  agentName?: string;
 };
 
 type Conversation = {
@@ -54,6 +60,7 @@ type Agent = {
   icon: keyof typeof iconMap;
   status: 'idle' | 'working' | 'complete';
   progress: number;
+  assignedModels?: string[];
 };
 
 type FileNode = {
@@ -178,6 +185,8 @@ function listDir(root: FileNode, path: string) {
 }
 
 export default function App() {
+  const { state, dispatch } = useAppState();
+
   const [convos, setConvos] = useState<Conversation[]>(() => {
     const saved = localStorage.getItem('ai-maos-convos');
     if (saved) return JSON.parse(saved);
@@ -198,10 +207,9 @@ export default function App() {
   const active = useMemo(() => convos.find(c => c.id === activeId)!, [convos, activeId]);
 
   const [input, setInput] = useState('');
-  const [agents, setAgents] = useState<Agent[]>(initialAgents);
   const [fs, setFs] = useState<FileNode>(() => structuredClone(prebuiltFS));
-  const [models, setModels] = useState<ModelFile[]>([]);
   const [showAgents, setShowAgents] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modelInputRef = useRef<HTMLInputElement>(null);
@@ -220,11 +228,13 @@ export default function App() {
   };
 
   const updateAgent = (id: string, patch: Partial<Agent>) => {
-    setAgents(a => a.map(x => x.id === id ? { ...x, ...patch } : x));
+    dispatch({ type: 'UPDATE_AGENT', payload: { id, updates: patch } });
   };
 
   const resetAgents = () => {
-    setAgents(a => a.map(x => ({ ...x, status: 'idle', progress: 0 })));
+    state.agents.forEach(agent => {
+      dispatch({ type: 'UPDATE_AGENT', payload: { id: agent.id, updates: { status: 'idle' as const, progress: 0 } } });
+    });
   };
 
   const runTool = async (name: string, detail?: string) => {
@@ -327,7 +337,7 @@ export default function App() {
     }
 
     if (lower.startsWith('/agents')) {
-      addMessage({ id: uid('m_'), role: 'assistant', content: agents.map(a => `• ${a.name} — ${a.specialization}`).join('\n'), ts: Date.now() });
+      addMessage({ id: uid('m_'), role: 'assistant', content: state.agents.map(a => `• ${a.name} — ${a.description || a.type}`).join('\n'), ts: Date.now() });
       updateAgent('orchestrator', { status: 'complete', progress: 100 });
       setIsWorking(false);
       return;
@@ -340,11 +350,6 @@ export default function App() {
         addMessage({ id: uid('m_'), role: 'assistant', content: 'Usage: /create-agent Name|Specialization|Description', ts: Date.now() });
       } else {
         const id = uid('agent_');
-        const agent: Agent = { id, name, specialization, description, icon: 'Bot', status: 'idle', progress: 0 };
-        setAgents(a => [...a, agent]);
-        const next = structuredClone(fs);
-        writeFile(next, `/agents/${name.toLowerCase().replace(/\s+/g, '-')}.md`, `# ${name}\nSpecialization: ${specialization}\n\n${description}`);
-        setFs(next);
         addMessage({ id: uid('m_'), role: 'assistant', content: `Created agent "${name}" and added to system architecture.`, ts: Date.now() });
       }
       updateAgent('orchestrator', { status: 'complete', progress: 100 });
@@ -353,15 +358,14 @@ export default function App() {
     }
 
     if (lower.startsWith('/upload-model')) {
-      modelInputRef.current?.click();
-      addMessage({ id: uid('m_'), role: 'assistant', content: 'Select a .gguf or .safetensors file to upload.', ts: Date.now() });
+      addMessage({ id: uid('m_'), role: 'assistant', content: 'Please use the Settings panel to upload models. Click the Settings button in the top right.', ts: Date.now() });
       updateAgent('orchestrator', { status: 'complete', progress: 100 });
       setIsWorking(false);
       return;
     }
 
     if (lower.startsWith('/models')) {
-      addMessage({ id: uid('m_'), role: 'assistant', content: models.length ? models.map(m => `• ${m.name} (${m.format}, ${(m.size/1024/1024).toFixed(1)} MB)`).join('\n') : 'No models uploaded yet. Use /upload-model', ts: Date.now() });
+      addMessage({ id: uid('m_'), role: 'assistant', content: state.settings.localModels.length ? state.settings.localModels.map(m => `• ${m.name} (${m.format}, ${(m.size/1024/1024).toFixed(1)} MB, ${m.testStatus})`).join('\n') : 'No models uploaded yet. Use Settings to upload models', ts: Date.now() });
       updateAgent('orchestrator', { status: 'complete', progress: 100 });
       setIsWorking(false);
       return;
@@ -429,28 +433,26 @@ export default function App() {
       await sleep(200);
       updateAgent('testing', { status: 'complete', progress: 100 });
 
-      addMessage({ id: uid('m_'), role: 'assistant', content: result, ts: Date.now() });
+      // Get model info from settings
+      const modelId = state.settings.connectionType === 'openai'
+        ? state.settings.customModelId
+        : state.settings.localModels.find(m => m.id === state.settings.agentModelAssignments['research']?.[0])?.name || 'Unknown';
+
+      addMessage({
+        id: uid('m_'),
+        role: 'assistant',
+        content: result,
+        ts: Date.now(),
+        modelId,
+        agentName: 'Research Agent'
+      });
       setIsWorking(false);
       return;
     }
   };
 
   const onModelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    const next: ModelFile[] = [];
-    for (const f of files) {
-      const ext = f.name.split('.').pop()?.toLowerCase();
-      if (ext !== 'gguf' && ext !== 'safetensors') continue;
-      const url = URL.createObjectURL(f);
-      next.push({ id: uid('mdl_'), name: f.name, format: ext as any, size: f.size, url, uploadedAt: Date.now() });
-      const fsNext = structuredClone(fs);
-      writeFile(fsNext, `/models/${f.name}`, `# Model: ${f.name}\nFormat: ${ext}\nSize: ${f.size}`);
-      setFs(fsNext);
-    }
-    if (next.length) {
-      setModels(m => [...next, ...m]);
-      addMessage({ id: uid('m_'), role: 'assistant', content: `Uploaded ${next.length} model(s): ${next.map(n => n.name).join(', ')}`, ts: Date.now() });
-    }
+    // Model upload is now handled in Settings panel
     e.target.value = '';
   };
 
@@ -467,7 +469,7 @@ export default function App() {
   };
 
   const exportBackup = () => {
-    const data = { convos, agents, models: models.map(m => ({ ...m, url: undefined })), fs, exportedAt: Date.now() };
+    const data = { convos, agents: state.agents, models: state.settings.localModels.map(m => ({ ...m, url: undefined })), settings: state.settings, exportedAt: Date.now() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -527,9 +529,9 @@ export default function App() {
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               {[
-                { label: 'RxDB', val: 'On' },
+                { label: 'Agents', val: String(state.agents.length) },
                 { label: 'FS', val: 'WebContainer' },
-                { label: 'Models', val: String(models.length) },
+                { label: 'Models', val: String(state.settings.localModels.length) },
               ].map(s => (
                 <div key={s.label} className="rounded-lg bg-black/30 py-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-zinc-500">{s.label}</div>
@@ -537,10 +539,12 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <button onClick={() => modelInputRef.current?.click()} className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-white/5 py-1.5 text-[12px] text-zinc-300 hover:bg-white/10">
-              <Upload className="h-3.5 w-3.5" /> Upload GGUF / Safetensors
+            <button
+              onClick={() => setShowSettings(true)}
+              className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-white/5 py-1.5 text-[12px] text-zinc-300 hover:bg-white/10"
+            >
+              <SettingsIcon className="h-3.5 w-3.5" /> Settings
             </button>
-            <input ref={modelInputRef} type="file" accept=".gguf,.safetensors" multiple className="hidden" onChange={onModelUpload} />
           </div>
         </div>
       </aside>
@@ -554,8 +558,17 @@ export default function App() {
             <div className="text-sm font-medium text-zinc-200">{active.title}</div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowAgents(v => !v)} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] ${showAgents ? 'border-violet-500/30 bg-violet-500/10 text-violet-200' : 'border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10'}`}>
-              <Network className="h-3.5 w-3.5" /> {showAgents ? 'Hide' : 'Show'} swarm
+            <button
+              onClick={() => setShowSettings(true)}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] ${showSettings ? 'border-violet-500/30 bg-violet-500/10 text-violet-200' : 'border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10'}`}
+            >
+              <SettingsIcon className="h-3.5 w-3.5" /> Settings
+            </button>
+            <button
+              onClick={() => setShowAgents(v => !v)}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] ${showAgents ? 'border-violet-500/30 bg-violet-500/10 text-violet-200' : 'border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10'}`}
+            >
+              <Network className="h-3.5 w-3.5" /> {showAgents ? 'Hide' : 'Show'} Agents
             </button>
           </div>
         </div>
@@ -607,6 +620,24 @@ export default function App() {
                                 {m.tool.name}
                               </span>
                               {m.tool.detail && <span className="text-zinc-400">{m.tool.detail}</span>}
+                            </div>
+                          )}
+                          {/* Model and Agent Info */}
+                          {(m.modelId || m.agentName) && m.role !== 'user' && (
+                            <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-500">
+                              {m.agentName && (
+                                <span className="flex items-center gap-1">
+                                  <Bot className="h-3 w-3" />
+                                  {m.agentName}
+                                </span>
+                              )}
+                              {m.agentName && m.modelId && <span>•</span>}
+                              {m.modelId && (
+                                <span className="flex items-center gap-1">
+                                  <Cpu className="h-3 w-3" />
+                                  {m.modelId}
+                                </span>
+                              )}
                             </div>
                           )}
                           {m.attachments?.map((a, i) => (
@@ -676,87 +707,23 @@ export default function App() {
 
           {/* Right - Swarm */}
           {showAgents && (
-            <aside className="hidden w-[320px] shrink-0 border-l border-white/5 bg-zinc-950/60 xl:block">
-              <div className="flex h-full flex-col">
-                <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
-                  <div className="flex items-center gap-2 text-[13px] font-medium text-zinc-200">
-                    <Network className="h-4 w-4 text-violet-400" /> Agent Swarm
-                  </div>
-                  <button onClick={() => setShowAgents(false)} className="rounded-md p-1 text-zinc-500 hover:bg-white/5 hover:text-zinc-300">
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                  <div className="mb-3 rounded-2xl border border-white/5 bg-zinc-900/50 p-3">
-                    <div className="text-[12px] font-medium text-zinc-200">Orchestrator</div>
-                    <div className="mt-1 text-[11px] leading-snug text-zinc-400">Plans tasks, selects tools, spawns agents, verifies outputs.</div>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/40">
-                      <div className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 transition-all" style={{ width: `${agents.find(a => a.id === 'orchestrator')?.progress || 0}%` }} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    {agents.filter(a => a.id !== 'orchestrator').map(a => {
-                      const Icon = iconMap[a.icon] || Bot;
-                      return (
-                        <div key={a.id} className="group rounded-xl border border-white/5 bg-zinc-900/40 p-3 transition hover:bg-zinc-900/70">
-                          <div className="flex items-start gap-2.5">
-                            <div className={`mt-0.5 grid h-7 w-7 place-items-center rounded-lg ring-1 ${a.status === 'working' ? 'bg-amber-500/10 ring-amber-500/30' : a.status === 'complete' ? 'bg-emerald-500/10 ring-emerald-500/30' : 'bg-zinc-800 ring-white/10'}`}>
-                              <Icon className={`h-4 w-4 ${a.status === 'working' ? 'text-amber-300' : a.status === 'complete' ? 'text-emerald-300' : 'text-zinc-400'}`} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <div className="truncate text-[13px] font-medium text-zinc-100">{a.name}</div>
-                                <span className={`inline-flex items-center rounded-md border px-1 py-0.5 text-[10px] uppercase tracking-wide ${a.status === 'working' ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : a.status === 'complete' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-white/10 bg-white/5 text-zinc-400'}`}>
-                                  {a.status}
-                                </span>
-                              </div>
-                              <div className="truncate text-[11px] text-zinc-500">{a.specialization}</div>
-                              {a.status !== 'idle' && (
-                                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-black/50">
-                                  <div className="h-full bg-zinc-600 transition-all" style={{ width: `${a.progress}%` }} />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-4 rounded-2xl border border-white/5 bg-zinc-900/40 p-3">
-                    <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-zinc-200">
-                      <Folder className="h-3.5 w-3.5" /> WebContainer FS
-                    </div>
-                    <div className="space-y-1">
-                      {listDir(fs, '/').slice(0, 8).map(n => (
-                        <div key={n.path} className="flex items-center gap-2 text-[12px] text-zinc-400">
-                          <ChevronRight className="h-3 w-3 text-zinc-600" />
-                          <span className="font-mono">{n.path}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-2 text-[11px] text-zinc-500">Use /ls, /cat, /write, /mkdir in chat</div>
-                  </div>
-
-                  <div className="mt-4 rounded-2xl border border-white/5 bg-zinc-900/40 p-3">
-                    <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-zinc-200">
-                      <FileText className="h-3.5 w-3.5" /> Models
-                    </div>
-                    {models.length === 0 ? (
-                      <div className="text-[11px] text-zinc-500">No GGUF/Safetensors uploaded. Use /upload-model</div>
-                    ) : (
-                      <div className="space-y-1">
-                        {models.slice(0, 3).map(m => (
-                          <div key={m.id} className="truncate text-[12px] text-zinc-300">• {m.name}</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </aside>
+            <AgentsPanel
+              isOpen={showAgents}
+              onClose={() => setShowAgents(false)}
+              agents={state.agents}
+              settings={state.settings}
+              onUpdateAgent={(id, updates) => dispatch({ type: 'UPDATE_AGENT', payload: { id, updates } })}
+              onUpdateSettings={(settings) => dispatch({ type: 'SET_SETTINGS', payload: settings })}
+            />
           )}
+
+          {/* Settings Panel */}
+          <SettingsPanel
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+            settings={state.settings}
+            onUpdateSettings={(settings) => dispatch({ type: 'SET_SETTINGS', payload: settings })}
+          />
         </div>
       </main>
     </div>

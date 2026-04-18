@@ -1,6 +1,8 @@
 export type AgentStatus = 'idle' | 'thinking' | 'working' | 'completed' | 'error';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'retrying';
 export type AppMode = 'chat' | 'build' | 'research' | 'study' | 'browse' | 'automate';
+export type ConnectionType = 'local' | 'openai';
+export type ModelTestStatus = 'pending' | 'testing' | 'passed' | 'failed';
 
 export interface Agent {
   id: string;
@@ -11,6 +13,7 @@ export interface Agent {
   description: string;
   currentTask?: string;
   progress?: number;
+  assignedModels?: string[]; // List of model IDs assigned to this agent
 }
 
 export interface Task {
@@ -43,6 +46,8 @@ export interface Message {
   agentId?: string;
   timestamp: string;
   mode?: AppMode;
+  modelId?: string; // Which model was used for this message
+  agentName?: string; // Which agent generated this message
 }
 
 export interface Project {
@@ -70,6 +75,26 @@ export interface ModelConfig {
   modelId: string;
   localModelPath?: string;
   localModelSize?: string;
+}
+
+export interface ModelFile {
+  id: string;
+  name: string;
+  format: 'gguf' | 'safetensors';
+  size: number;
+  url: string;
+  uploadedAt: number;
+  testStatus: ModelTestStatus;
+  testDetails?: string;
+}
+
+export interface Settings {
+  connectionType: ConnectionType;
+  apiBaseUrl: string;
+  apiKey: string;
+  customModelId: string;
+  localModels: ModelFile[];
+  agentModelAssignments: Record<string, string[]>; // agentId -> modelIds
 }
 
 export interface BackupInfo {
