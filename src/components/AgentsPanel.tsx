@@ -8,7 +8,6 @@ interface AgentsPanelProps {
   onClose: () => void;
   agents: Agent[];
   settings: Settings;
-  onUpdateAgent: (agentId: string, updates: Partial<Agent>) => void;
   onUpdateSettings: (settings: Settings) => void;
 }
 
@@ -17,7 +16,6 @@ export default function AgentsPanel({
   onClose,
   agents,
   settings,
-  onUpdateAgent,
   onUpdateSettings,
 }: AgentsPanelProps) {
   const orchestrator = agents.find(a => a.id === 'orchestrator');
@@ -106,9 +104,11 @@ export default function AgentsPanel({
               {otherAgents.map(agent => {
                 const assignedModels = settings.agentModelAssignments[agent.id] || [];
                 const useOpenAI = assignedModels.length === 0 || assignedModels.includes('openai');
-                const model = useOpenAI
+                const model: { name: string; type: 'openai' | 'local' } | undefined = useOpenAI
                   ? { name: settings.customModelId || 'gpt-4o', type: 'openai' as const }
-                  : settings.localModels.find(m => m.id === assignedModels[0]);
+                  : settings.localModels.find(m => m.id === assignedModels[0])?.name
+                  ? { name: settings.localModels.find(m => m.id === assignedModels[0])!.name, type: 'local' as const }
+                  : undefined;
 
                 return (
                   <div
@@ -118,7 +118,7 @@ export default function AgentsPanel({
                       agent.status === 'working'
                         ? 'border-amber-500/20 bg-amber-500/5'
                         : agent.status === 'completed'
-                        ? 'border-emerald-500/20 bg-emerald-500/5'
+                        ? 'border-cyan-500/20 bg-cyan-500/5'
                         : 'border-white/5 bg-zinc-900/40 hover:bg-zinc-900/60'
                     )}
                   >
@@ -131,7 +131,7 @@ export default function AgentsPanel({
                             agent.status === 'working'
                               ? 'bg-amber-500/10 ring-amber-500/30'
                               : agent.status === 'completed'
-                              ? 'bg-emerald-500/10 ring-emerald-500/30'
+                              ? 'bg-cyan-500/10 ring-cyan-500/30'
                               : 'bg-zinc-800 ring-white/10'
                           )}
                         >
@@ -184,7 +184,7 @@ export default function AgentsPanel({
                                 agent.status === 'working'
                                   ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
                                   : agent.status === 'completed'
-                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                                  ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
                                   : 'border-white/10 bg-white/5 text-zinc-400'
                               )}
                             >
@@ -212,7 +212,7 @@ export default function AgentsPanel({
                               agent.status === 'working'
                                 ? 'bg-amber-500'
                                 : agent.status === 'completed'
-                                ? 'bg-emerald-500'
+                                ? 'bg-cyan-500'
                                 : 'bg-zinc-600'
                             )}
                             style={{ width: `${agent.progress}%` }}
@@ -233,7 +233,7 @@ export default function AgentsPanel({
                             {model.type === 'openai' ? (
                               <Globe className="h-3 w-3 text-zinc-500" />
                             ) : (
-                              <Cpu className="h-3 w-3 text-emerald-400" />
+                              <Cpu className="h-3 w-3 text-cyan-400" />
                             )}
                             <span className="truncate text-[10px] text-zinc-400">
                               {model.name}

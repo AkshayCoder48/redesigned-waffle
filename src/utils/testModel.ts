@@ -1,3 +1,5 @@
+import { testModelCompatibility } from './modelValidator';
+
 export type ModelTestStatus = 'pending' | 'testing' | 'passed' | 'failed';
 
 export interface ModelTestResult {
@@ -8,15 +10,6 @@ export interface ModelTestResult {
 }
 
 export async function testModel(file: File, onProgress?: (progress: number, message: string) => void): Promise<ModelTestResult> {
-  const stages = [
-    { progress: 10, message: 'Validating file format...', delay: 300 },
-    { progress: 30, message: 'Reading model headers...', delay: 500 },
-    { progress: 50, message: 'Checking tensor structure...', delay: 700 },
-    { progress: 70, message: 'Verifying compatibility...', delay: 400 },
-    { progress: 90, message: 'Running inference test...', delay: 600 },
-    { progress: 100, message: 'Test complete', delay: 200 },
-  ];
-
   // Validate file extension
   const ext = file.name.split('.').pop()?.toLowerCase();
   if (ext !== 'gguf' && ext !== 'safetensors') {
@@ -36,29 +29,30 @@ export async function testModel(file: File, onProgress?: (progress: number, mess
     };
   }
 
-  // Simulate testing stages
-  for (const stage of stages) {
-    await new Promise(resolve => setTimeout(resolve, stage.delay));
-    if (onProgress) {
-      onProgress(stage.progress, stage.message);
+  // Run real validation
+  try {
+    const result = await testModelCompatibility(file, onProgress);
+    
+    if (result.success) {
+      return {
+        status: 'passed',
+        progress: 100,
+        details: result.details,
+      };
+    } else {
+      return {
+        status: 'failed',
+        progress: 100,
+        error: result.details,
+      };
     }
-  }
-
-  // Randomly fail 5% of the time to simulate real-world testing
-  const shouldFail = Math.random() < 0.05;
-  if (shouldFail) {
+  } catch (error) {
     return {
       status: 'failed',
-      progress: 100,
-      error: 'Model validation failed: Incompatible tensor format detected',
+      progress: 0,
+      error: error instanceof Error ? error.message : 'Unknown validation error',
     };
   }
-
-  return {
-    status: 'passed',
-    progress: 100,
-    details: `Model "${file.name}" (${ext}) validated successfully. ${(file.size / 1024 / 1024).toFixed(2)} MB`,
-  };
 }
 
 export function getModelFormatFromFilename(filename: string): 'gguf' | 'safetensors' | null {

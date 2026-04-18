@@ -8,7 +8,6 @@ import {
   Image as ImageIcon,
   Video,
   Mic,
-  FileText,
   Upload,
   Cpu,
   Network,
@@ -21,18 +20,17 @@ import {
   Database,
   Layers3,
   Terminal,
-  Folder,
   FolderTree,
-  ChevronRight,
   History,
   Trash2,
   Download,
-  X,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import SettingsPanel from './components/SettingsPanel';
 import AgentsPanel from './components/AgentsPanel';
 import { useAppState } from './store/AppContext';
+import * as orchestrator from './utils/orchestrator';
+import * as fileSystem from './utils/fileSystem';
 
 type Message = {
   id: string;
@@ -71,15 +69,6 @@ type FileNode = {
   children?: FileNode[];
 };
 
-type ModelFile = {
-  id: string;
-  name: string;
-  format: 'gguf' | 'safetensors';
-  size: number;
-  url: string;
-  uploadedAt: number;
-};
-
 const iconMap = {
   Brain,
   Bot,
@@ -96,17 +85,6 @@ const iconMap = {
 };
 
 const uid = (p = '') => `${p}${Math.random().toString(36).slice(2, 9)}`;
-
-const initialAgents: Agent[] = [
-  { id: 'orchestrator', name: 'Orchestrator', specialization: 'Planning & routing', description: 'Understands intent and coordinates sub-agents', icon: 'Brain', status: 'idle', progress: 0 },
-  { id: 'coding', name: 'Coding Agent', specialization: 'Full-stack development', description: 'Writes, refactors, and ships code', icon: 'Code2', status: 'idle', progress: 0 },
-  { id: 'research', name: 'Research Agent', specialization: 'Deep research', description: 'Synthesizes sources and evidence', icon: 'Search', status: 'idle', progress: 0 },
-  { id: 'browser', name: 'Browser Agent', specialization: 'Web automation', description: 'Playwright-based browsing', icon: 'Globe', status: 'idle', progress: 0 },
-  { id: 'testing', name: 'Testing Agent', specialization: 'QA & verification', description: 'Validates outputs and catches regressions', icon: 'TestTube2', status: 'idle', progress: 0 },
-  { id: 'docs', name: 'Documentation', specialization: 'Technical writing', description: 'Produces clear docs and guides', icon: 'BookOpen', status: 'idle', progress: 0 },
-  { id: 'data', name: 'Data Agent', specialization: 'ETL & analysis', description: 'Cleans, transforms, and analyzes data', icon: 'Database', status: 'idle', progress: 0 },
-  { id: 'uiux', name: 'UI/UX Agent', specialization: 'Design systems', description: 'Creates interfaces and components', icon: 'Layers3', status: 'idle', progress: 0 },
-];
 
 const prebuiltFS: FileNode = {
   name: '',
@@ -131,9 +109,6 @@ const prebuiltFS: FileNode = {
     ]},
     { name: 'projects', path: '/projects', type: 'folder', children: [] },
     { name: 'backups', path: '/backups', type: 'folder', children: [] },
-    { name: 'webcontainer', path: '/webcontainer', type: 'folder', children: [
-      { name: 'terminal.log', path: '/webcontainer/terminal.log', type: 'file', content: 'WebContainer ready.\n' }
-    ]},
   ],
 };
 
@@ -164,7 +139,7 @@ function ensureDir(root: FileNode, path: string) {
   return cur;
 }
 
-function writeFile(root: FileNode, path: string, content: string) {
+function writeFileHelper(root: FileNode, path: string, content: string) {
   const dir = path.substring(0, path.lastIndexOf('/')) || '/';
   const name = path.substring(path.lastIndexOf('/') + 1);
   const parent = ensureDir(root, dir);
@@ -178,7 +153,7 @@ function writeFile(root: FileNode, path: string, content: string) {
   }
 }
 
-function listDir(root: FileNode, path: string) {
+function listDirHelper(root: FileNode, path: string) {
   const node = findNode(root, path);
   if (!node || node.type !== 'folder') return [];
   return node.children || [];
@@ -207,12 +182,10 @@ export default function App() {
   const active = useMemo(() => convos.find(c => c.id === activeId)!, [convos, activeId]);
 
   const [input, setInput] = useState('');
-  const [fs, setFs] = useState<FileNode>(() => structuredClone(prebuiltFS));
   const [showAgents, setShowAgents] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const modelInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -222,6 +195,11 @@ export default function App() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [active?.messages.length]);
+
+  // Initialize file system on mount
+  useEffect(() => {
+    fileSystem.initFileSystem().catch(console.error);
+  }, []);
 
   const addMessage = (m: Message) => {
     setConvos(prev => prev.map(c => c.id === activeId ? { ...c, messages: [...c.messages, m], title: c.messages.length <= 2 ? m.content.slice(0, 48) : c.title } : c));
@@ -250,21 +228,6 @@ export default function App() {
     } : c));
   };
 
-  const generateText = async (prompt: string) => {
-    try {
-      const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`);
-      return await res.text();
-    } catch {
-      return 'Text generation failed. Try again.';
-    }
-  };
-
-  const generateImage = (prompt: string) => `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&model=flux`;
-
-  const generateVideo = (prompt: string) => `https://gen.pollinations.ai/video/${encodeURIComponent(prompt)}`;
-
-  const generateAudio = (text: string, voice = 'nova') => `https://gen.pollinations.ai/audio/${encodeURIComponent(text)}?voice=${voice}`;
-
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isWorking) return;
@@ -274,186 +237,164 @@ export default function App() {
 
     addMessage({ id: uid('m_'), role: 'user', content: text, ts: Date.now() });
 
-    // Orchestrator planning
+    // Orchestrator intent detection
     updateAgent('orchestrator', { status: 'working', progress: 30 });
-    await sleep(300);
+    await sleep(200);
+
+    const parsed = orchestrator.parseCommand(text);
+    const decision = orchestrator.detectIntent(text);
+
     updateAgent('orchestrator', { progress: 70 });
+    await sleep(100);
+    updateAgent('orchestrator', { progress: 100, status: 'completed' });
 
-    const lower = text.toLowerCase();
-
-    // Commands
-    if (lower.startsWith('/help')) {
-      addMessage({ id: uid('m_'), role: 'assistant', content: `Tools available via chat:\n• /image <prompt> — generate image\n• /video <prompt> — generate video\n• /audio <prompt> — text to speech\n• /text <prompt> — generate text\n• /ls [path] — list files\n• /cat <path> — read file\n• /write <path>::<content> — write file\n• /mkdir <path>\n• /agents — list agents\n• /create-agent <name>|<specialization>|<description>\n• /upload-model — upload .gguf or .safetensors\n• /models — list uploaded models\nNatural language also works: "generate an image of...", "create a video...", "speak: hello"`, ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
-
-    if (lower.startsWith('/ls')) {
-      const path = text.split(' ')[1] || '/';
-      const items = listDir(fs, path);
-      addMessage({ id: uid('m_'), role: 'assistant', content: `/${path}\n` + items.map(i => `${i.type === 'folder' ? '📁' : '📄'} ${i.name}`).join('\n') || 'Empty', ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
-
-    if (lower.startsWith('/cat ')) {
-      const path = text.slice(5).trim();
-      const node = findNode(fs, path);
-      addMessage({ id: uid('m_'), role: 'assistant', content: node?.type === 'file' ? `\`${path}\`\n\n${node.content}` : 'File not found', ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
-
-    if (lower.startsWith('/write ')) {
-      const payload = text.slice(7);
-      const idx = payload.indexOf('::');
-      if (idx > 0) {
-        const path = payload.slice(0, idx).trim();
-        const content = payload.slice(idx + 2);
-        const next = structuredClone(fs);
-        writeFile(next, path, content);
-        setFs(next);
-        addMessage({ id: uid('m_'), role: 'assistant', content: `Wrote ${path} (${content.length} bytes)`, ts: Date.now() });
-      } else {
-        addMessage({ id: uid('m_'), role: 'assistant', content: 'Usage: /write /path/file.txt::content', ts: Date.now() });
+    // Handle commands
+    if (parsed && parsed.isCommand) {
+      const { command, args } = parsed;
+      
+      if (command === 'help') {
+        addMessage({ id: uid('m_'), role: 'assistant', content: `Tools available via chat:\n• /image <prompt> — generate image\n• /video <prompt> — generate video\n• /audio <prompt> — text to speech\n• /text <prompt> — generate text\n• /ls [path] — list files\n• /cat <path> — read file\n• /write <path>::<content> — write file\n• /mkdir <path> — create directory\n• /agents — list agents\n• /models — list uploaded models\nNatural language also works: "generate an image of...", "create a video...", "speak: hello"`, ts: Date.now() });
+        setIsWorking(false);
+        return;
       }
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
 
-    if (lower.startsWith('/mkdir ')) {
-      const path = text.split(' ')[1];
-      const next = structuredClone(fs);
-      ensureDir(next, path);
-      setFs(next);
-      addMessage({ id: uid('m_'), role: 'assistant', content: `Created ${path}`, ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
-
-    if (lower.startsWith('/agents')) {
-      addMessage({ id: uid('m_'), role: 'assistant', content: state.agents.map(a => `• ${a.name} — ${a.description || a.type}`).join('\n'), ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
-
-    if (lower.startsWith('/create-agent')) {
-      const payload = text.replace('/create-agent', '').trim();
-      const [name, specialization = 'Custom', description = 'User-created agent'] = payload.split('|').map(s => s.trim());
-      if (!name) {
-        addMessage({ id: uid('m_'), role: 'assistant', content: 'Usage: /create-agent Name|Specialization|Description', ts: Date.now() });
-      } else {
-        const id = uid('agent_');
-        addMessage({ id: uid('m_'), role: 'assistant', content: `Created agent "${name}" and added to system architecture.`, ts: Date.now() });
+      if (command === 'ls') {
+        const path = args?.[0] || '/';
+        try {
+          const items = await fileSystem.listFiles(path);
+          const output = `/${path}\n` + items.map(i => `${i.type === 'folder' ? '📁' : '📄'} ${i.name}`).join('\n') || 'Empty';
+          addMessage({ id: uid('m_'), role: 'assistant', content: output, ts: Date.now() });
+        } catch (error) {
+          addMessage({ id: uid('m_'), role: 'assistant', content: `Error listing files: ${error}`, ts: Date.now() });
+        }
+        setIsWorking(false);
+        return;
       }
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
+
+      if (command === 'cat') {
+        const path = args?.[0];
+        if (path) {
+          try {
+            const content = await fileSystem.readFile(path);
+            addMessage({ id: uid('m_'), role: 'assistant', content: content ? `\`${path}\`\n\n${content}` : 'File not found', ts: Date.now() });
+          } catch (error) {
+            addMessage({ id: uid('m_'), role: 'assistant', content: `Error reading file: ${error}`, ts: Date.now() });
+          }
+        }
+        setIsWorking(false);
+        return;
+      }
+
+      if (command === 'write') {
+        const payload = args?.join(' ') || '';
+        const idx = payload.indexOf('::');
+        if (idx > 0) {
+          const path = payload.slice(0, idx).trim();
+          const content = payload.slice(idx + 2);
+          try {
+            await fileSystem.writeFile(path, content);
+            addMessage({ id: uid('m_'), role: 'assistant', content: `Wrote ${path} (${content.length} bytes)`, ts: Date.now() });
+          } catch (error) {
+            addMessage({ id: uid('m_'), role: 'assistant', content: `Error writing file: ${error}`, ts: Date.now() });
+          }
+        } else {
+          addMessage({ id: uid('m_'), role: 'assistant', content: 'Usage: /write /path/file.txt::content', ts: Date.now() });
+        }
+        setIsWorking(false);
+        return;
+      }
+
+      if (command === 'mkdir') {
+        const path = args?.[0];
+        if (path) {
+          try {
+            await fileSystem.createDirectory(path);
+            addMessage({ id: uid('m_'), role: 'assistant', content: `Created ${path}`, ts: Date.now() });
+          } catch (error) {
+            addMessage({ id: uid('m_'), role: 'assistant', content: `Error creating directory: ${error}`, ts: Date.now() });
+          }
+        }
+        setIsWorking(false);
+        return;
+      }
+
+      if (command === 'agents') {
+        addMessage({ id: uid('m_'), role: 'assistant', content: state.agents.map(a => `• ${a.name} — ${a.description || a.type}`).join('\n'), ts: Date.now() });
+        setIsWorking(false);
+        return;
+      }
+
+      if (command === 'models') {
+        addMessage({ id: uid('m_'), role: 'assistant', content: state.settings.localModels.length ? state.settings.localModels.map(m => `• ${m.name} (${m.format}, ${(m.size/1024/1024).toFixed(1)} MB, ${m.testStatus})`).join('\n') : 'No models uploaded yet. Use Settings to upload models', ts: Date.now() });
+        setIsWorking(false);
+        return;
+      }
     }
 
-    if (lower.startsWith('/upload-model')) {
-      addMessage({ id: uid('m_'), role: 'assistant', content: 'Please use the Settings panel to upload models. Click the Settings button in the top right.', ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
+    // Handle intent-based routing
+    const { intent, agentId } = decision;
 
-    if (lower.startsWith('/models')) {
-      addMessage({ id: uid('m_'), role: 'assistant', content: state.settings.localModels.length ? state.settings.localModels.map(m => `• ${m.name} (${m.format}, ${(m.size/1024/1024).toFixed(1)} MB, ${m.testStatus})`).join('\n') : 'No models uploaded yet. Use Settings to upload models', ts: Date.now() });
-      updateAgent('orchestrator', { status: 'complete', progress: 100 });
-      setIsWorking(false);
-      return;
-    }
-
-    // Tool detection
-    const isImage = /(^\/image|^\/img|generate.*image|create.*image|draw|picture of|render image)/i.test(text);
-    const isVideo = /(^\/video|generate.*video|create.*video|make.*video)/i.test(text);
-    const isAudio = /(^\/audio|speak:|text to speech|generate.*audio|tts)/i.test(text);
-    const isTextGen = /(^\/text|write.*|explain|draft|generate.*text|summarize)/i.test(text);
-
-    updateAgent('orchestrator', { progress: 100, status: 'complete' });
-
-    if (isImage) {
-      updateAgent('uiux', { status: 'working', progress: 20 });
+    if (intent === 'image') {
+      updateAgent(agentId, { status: 'working', progress: 20 });
       const prompt = text.replace(/^\/image|^\/img/i, '').replace(/generate.*image(:)?|create.*image(:)?|draw(:)?|picture of/i, '').trim() || text;
       const toolId = await runTool('image_generation', prompt);
-      await sleep(400);
-      updateAgent('uiux', { progress: 70 });
-      const url = generateImage(prompt);
+      await sleep(300);
+      updateAgent(agentId, { progress: 70 });
+      const url = orchestrator.getPollinationsUrl('image', prompt);
       completeTool(toolId, 'done');
-      updateAgent('uiux', { status: 'complete', progress: 100 });
+      updateAgent(agentId, { status: 'completed', progress: 100 });
       addMessage({ id: uid('m_'), role: 'assistant', content: `Generated image for: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'image', url, name: 'image.png' }] });
       setIsWorking(false);
       return;
     }
 
-    if (isVideo) {
-      updateAgent('browser', { status: 'working', progress: 30 });
+    if (intent === 'video') {
+      updateAgent(agentId, { status: 'working', progress: 30 });
       const prompt = text.replace(/^\/video/i, '').replace(/generate.*video(:)?|create.*video(:)?/i, '').trim() || text;
       const toolId = await runTool('video_generation', prompt);
-      await sleep(600);
-      const url = generateVideo(prompt);
+      await sleep(500);
+      const url = orchestrator.getPollinationsUrl('video', prompt);
       completeTool(toolId, 'done');
-      updateAgent('browser', { status: 'complete', progress: 100 });
+      updateAgent(agentId, { status: 'completed', progress: 100 });
       addMessage({ id: uid('m_'), role: 'assistant', content: `Generated video for: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'video', url, name: 'video.mp4' }] });
       setIsWorking(false);
       return;
     }
 
-    if (isAudio) {
-      updateAgent('docs', { status: 'working', progress: 40 });
+    if (intent === 'audio') {
+      updateAgent(agentId, { status: 'working', progress: 40 });
       const prompt = text.replace(/^\/audio/i, '').replace(/speak:|text to speech|generate.*audio|tts/i, '').trim() || text;
       const toolId = await runTool('audio_generation', prompt);
       await sleep(300);
-      const url = generateAudio(prompt);
+      const url = orchestrator.getPollinationsUrl('audio', prompt);
       completeTool(toolId, 'done');
-      updateAgent('docs', { status: 'complete', progress: 100 });
+      updateAgent(agentId, { status: 'completed', progress: 100 });
       addMessage({ id: uid('m_'), role: 'assistant', content: `Generated audio: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'audio', url, name: 'speech.mp3' }] });
       setIsWorking(false);
       return;
     }
 
-    if (isTextGen || true) {
-      // Default to text generation + agent routing
-      updateAgent('research', { status: 'working', progress: 25 });
-      updateAgent('coding', { status: 'working', progress: 10 });
-      const toolId = await runTool('text_generation', text.slice(0, 120));
-      await sleep(400);
-      const result = await generateText(text);
-      completeTool(toolId);
-      updateAgent('research', { status: 'complete', progress: 100 });
-      updateAgent('coding', { status: 'complete', progress: 100 });
-      updateAgent('testing', { status: 'working', progress: 50 });
-      await sleep(200);
-      updateAgent('testing', { status: 'complete', progress: 100 });
+    // Text generation (default)
+    updateAgent(agentId, { status: 'working', progress: 25 });
+    const toolId = await runTool('text_generation', text.slice(0, 120));
+    await sleep(300);
 
-      // Get model info from settings
-      const modelId = state.settings.connectionType === 'openai'
-        ? state.settings.customModelId
-        : state.settings.localModels.find(m => m.id === state.settings.agentModelAssignments['research']?.[0])?.name || 'Unknown';
+    const { content, agentName } = await orchestrator.generateTextViaPollinations(text, agentId);
+    completeTool(toolId);
+    updateAgent(agentId, { status: 'completed', progress: 100 });
 
-      addMessage({
-        id: uid('m_'),
-        role: 'assistant',
-        content: result,
-        ts: Date.now(),
-        modelId,
-        agentName: 'Research Agent'
-      });
-      setIsWorking(false);
-      return;
-    }
-  };
+    // Get model info
+    const modelId = orchestrator.getModelForAgent(agentId, intent, state.settings);
 
-  const onModelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Model upload is now handled in Settings panel
-    e.target.value = '';
+    addMessage({
+      id: uid('m_'),
+      role: 'assistant',
+      content,
+      ts: Date.now(),
+      modelId,
+      agentName,
+    });
+    setIsWorking(false);
   };
 
   const newChat = () => {
@@ -525,7 +466,7 @@ export default function App() {
         <div className="border-t border-white/5 p-3">
           <div className="rounded-2xl border border-white/5 bg-zinc-900/50 p-3">
             <div className="mb-2 flex items-center gap-2 text-[12px] font-medium text-zinc-300">
-              <Cpu className="h-3.5 w-3.5 text-emerald-400" /> Local-first system
+              <Cpu className="h-3.5 w-3.5 text-cyan-400" /> Local-first system
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               {[
@@ -615,8 +556,8 @@ export default function App() {
                           <div className="whitespace-pre-wrap">{m.content}</div>
                           {m.tool && (
                             <div className="mt-2 flex items-center gap-2 text-[11px]">
-                              <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${m.tool.status === 'running' ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : m.tool.status === 'done' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${m.tool.status === 'running' ? 'animate-pulse bg-amber-400' : m.tool.status === 'done' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                              <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${m.tool.status === 'running' ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : m.tool.status === 'done' ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${m.tool.status === 'running' ? 'animate-pulse bg-amber-400' : m.tool.status === 'done' ? 'bg-cyan-400' : 'bg-red-400'}`} />
                                 {m.tool.name}
                               </span>
                               {m.tool.detail && <span className="text-zinc-400">{m.tool.detail}</span>}
@@ -712,7 +653,6 @@ export default function App() {
               onClose={() => setShowAgents(false)}
               agents={state.agents}
               settings={state.settings}
-              onUpdateAgent={(id, updates) => dispatch({ type: 'UPDATE_AGENT', payload: { id, updates } })}
               onUpdateSettings={(settings) => dispatch({ type: 'SET_SETTINGS', payload: settings })}
             />
           )}

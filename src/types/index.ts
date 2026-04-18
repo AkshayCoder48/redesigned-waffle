@@ -1,5 +1,4 @@
 export type AgentStatus = 'idle' | 'thinking' | 'working' | 'completed' | 'error';
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'retrying';
 export type AppMode = 'chat' | 'build' | 'research' | 'study' | 'browse' | 'automate';
 export type ConnectionType = 'local' | 'openai';
 export type ModelTestStatus = 'pending' | 'testing' | 'passed' | 'failed';
@@ -13,30 +12,19 @@ export interface Agent {
   description: string;
   currentTask?: string;
   progress?: number;
-  assignedModels?: string[]; // List of model IDs assigned to this agent
+  assignedModels?: string[];
 }
 
 export interface Task {
   id: string;
   title: string;
-  status: TaskStatus;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'retrying';
   assignedAgent: string;
   createdAt: string;
   completedAt?: string;
   retries: number;
   output?: string;
   logs: string[];
-}
-
-export interface Skill {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  source: 'generated' | 'uploaded';
-  createdAt: string;
-  content: string;
-  tags: string[];
 }
 
 export interface Message {
@@ -46,18 +34,8 @@ export interface Message {
   agentId?: string;
   timestamp: string;
   mode?: AppMode;
-  modelId?: string; // Which model was used for this message
-  agentName?: string; // Which agent generated this message
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  description: string;
-  createdAt: string;
-  files: FileNode[];
-  tasks: Task[];
-  messages: Message[];
+  modelId?: string;
+  agentName?: string;
 }
 
 export interface FileNode {
@@ -94,21 +72,5 @@ export interface Settings {
   apiKey: string;
   customModelId: string;
   localModels: ModelFile[];
-  agentModelAssignments: Record<string, string[]>; // agentId -> modelIds
-}
-
-export interface BackupInfo {
-  id: string;
-  name: string;
-  date: string;
-  size: string;
-  type: 'manual' | 'auto';
-}
-
-export interface ActivityLog {
-  id: string;
-  type: 'agent' | 'task' | 'system' | 'skill' | 'backup';
-  message: string;
-  timestamp: string;
-  level: 'info' | 'success' | 'warning' | 'error';
+  agentModelAssignments: Record<string, string[]>;
 }
