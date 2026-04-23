@@ -58,6 +58,10 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     updateSettings({ apiKey: value });
   };
 
+  const handleApiBaseUrlChange = (value: string) => {
+    updateSettings({ apiBaseUrl: value });
+  };
+
   const handleCustomModelIdChange = (value: string) => {
     updateSettings({ customModelId: value });
   };
@@ -532,8 +536,8 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       settings.connectionType === 'openai' ? 'text-violet-400' : 'text-zinc-500'
                     )} />
                     <div>
-                      <div className="text-[13px] font-medium text-zinc-100">OpenAI API</div>
-                      <div className="text-[11px] text-zinc-500">Use cloud models</div>
+                      <div className="text-[13px] font-medium text-zinc-100">OpenAI-compatible API</div>
+                      <div className="text-[11px] text-zinc-500">Use any compatible cloud endpoint</div>
                     </div>
                     {settings.connectionType === 'openai' && (
                       <Check className="ml-auto h-4 w-4 text-cyan-400" />
@@ -542,7 +546,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                 </div>
               </div>
 
-              {/* OpenAI Settings */}
+              {/* OpenAI-compatible Settings */}
               {settings.connectionType === 'openai' && (
                 <div className="space-y-4">
                   {/* Selected Provider/Model Info */}
@@ -568,6 +572,22 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       </div>
                     </div>
                   )}
+
+                  <div>
+                    <label className="mb-2 block text-[13px] font-medium text-zinc-200">
+                      API Base URL
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.apiBaseUrl}
+                      onChange={e => handleApiBaseUrlChange(e.target.value)}
+                      placeholder="https://api.openai.com/v1"
+                      className="w-full rounded-xl border border-white/10 bg-zinc-900/50 px-4 py-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none focus:ring-1 focus:ring-violet-500/20"
+                    />
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Use the provider root path that exposes OpenAI-compatible endpoints.
+                    </p>
+                  </div>
 
                   <div>
                     <label className="mb-2 block text-[13px] font-medium text-zinc-200">
@@ -597,7 +617,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       type="text"
                       value={settings.customModelId}
                       onChange={e => handleCustomModelIdChange(e.target.value)}
-                      placeholder="gpt-4o, gpt-4-turbo, gpt-3.5-turbo"
+                      placeholder="gpt-4o, llama-3.1-70b, mistral-large"
                       className="w-full rounded-xl border border-white/10 bg-zinc-900/50 px-4 py-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none focus:ring-1 focus:ring-violet-500/20"
                     />
                   </div>

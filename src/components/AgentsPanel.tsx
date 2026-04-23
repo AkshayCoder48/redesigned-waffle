@@ -2,6 +2,7 @@ import { X, Network, Brain, Cpu, Globe, ChevronRight, Info } from 'lucide-react'
 import { Agent, Settings } from '../types';
 import AgentModelSelector from './AgentModelSelector';
 import { cn } from '../utils/cn';
+import { resolveModelForAgent } from '../utils/orchestrator';
 
 interface AgentsPanelProps {
   isOpen: boolean;
@@ -102,13 +103,11 @@ export default function AgentsPanel({
             </div>
             <div className="space-y-3">
               {otherAgents.map(agent => {
-                const assignedModels = settings.agentModelAssignments[agent.id] || [];
-                const useOpenAI = assignedModels.length === 0 || assignedModels.includes('openai');
-                const model: { name: string; type: 'openai' | 'local' } | undefined = useOpenAI
-                  ? { name: settings.customModelId || 'gpt-4o', type: 'openai' as const }
-                  : settings.localModels.find(m => m.id === assignedModels[0])?.name
-                  ? { name: settings.localModels.find(m => m.id === assignedModels[0])!.name, type: 'local' as const }
-                  : undefined;
+                const resolvedModel = resolveModelForAgent(agent.id, settings);
+                const model: { name: string; type: 'remote' | 'local' } = {
+                  name: resolvedModel.modelName,
+                  type: resolvedModel.source === 'local' ? 'local' : 'remote',
+                };
 
                 return (
                   <div
@@ -228,18 +227,16 @@ export default function AgentsPanel({
                           <Globe className="h-3 w-3" />
                           <span>Model</span>
                         </div>
-                        {model && (
-                          <div className="flex items-center gap-1.5">
-                            {model.type === 'openai' ? (
-                              <Globe className="h-3 w-3 text-zinc-500" />
-                            ) : (
-                              <Cpu className="h-3 w-3 text-cyan-400" />
-                            )}
-                            <span className="truncate text-[10px] text-zinc-400">
-                              {model.name}
-                            </span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {model.type === 'remote' ? (
+                            <Globe className="h-3 w-3 text-zinc-500" />
+                          ) : (
+                            <Cpu className="h-3 w-3 text-cyan-400" />
+                          )}
+                          <span className="truncate text-[10px] text-zinc-400">
+                            {model.name}
+                          </span>
+                        </div>
                       </div>
                       <AgentModelSelector
                         agentId={agent.id}
@@ -261,8 +258,9 @@ export default function AgentsPanel({
               <div className="text-[11px] leading-relaxed text-zinc-400">
                 <span className="font-medium text-zinc-300">Model Assignment:</span>{' '}
                 Each agent can be assigned specific models. By default, agents use
-                OpenAI. Upload local models in Settings and assign them to agents
-                here for offline or specialized inference.
+                the selected OpenAI-compatible provider. Upload local models in
+                Settings and assign them to agents here for offline or specialized
+                inference.
               </div>
             </div>
           </div>

@@ -135,9 +135,9 @@ const pollinationsTemplate: ProviderTemplate = {
 
 const defaultSettings: Settings = {
   connectionType: 'openai',
-  apiBaseUrl: 'https://api.openai.com/v1',
+  apiBaseUrl: pollinationsTemplate.apiBaseUrl,
   apiKey: '',
-  customModelId: 'gpt-4o',
+  customModelId: 'openai',
   localModels: [],
   agentModelAssignments: {},
   providerTemplates: [pollinationsTemplate],
@@ -151,17 +151,25 @@ const loadSettingsFromStorage = (): Settings => {
     const saved = localStorage.getItem('ai-maos-settings');
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Merge with defaults to handle new fields
-      // Ensure providerTemplates always includes at least the Pollinations template
       const mergedTemplates = parsed.providerTemplates?.length > 0
         ? parsed.providerTemplates
         : defaultSettings.providerTemplates;
+
+      const selectedProviderId = parsed.selectedProviderId || defaultSettings.selectedProviderId;
+      const selectedProvider = mergedTemplates.find((template: ProviderTemplate) => template.id === selectedProviderId);
+      const shouldUseProviderBaseUrl = !parsed.apiBaseUrl || (
+        parsed.apiBaseUrl === 'https://api.openai.com/v1' && selectedProviderId === 'pollinations'
+      );
+
       return {
         ...defaultSettings,
         ...parsed,
         providerTemplates: mergedTemplates,
-        selectedProviderId: parsed.selectedProviderId || defaultSettings.selectedProviderId,
+        selectedProviderId,
         selectedModelId: parsed.selectedModelId || defaultSettings.selectedModelId,
+        apiBaseUrl: shouldUseProviderBaseUrl
+          ? (selectedProvider?.apiBaseUrl || defaultSettings.apiBaseUrl)
+          : parsed.apiBaseUrl,
       };
     }
   } catch (error) {
@@ -180,9 +188,9 @@ const initialState: AppState = {
   ],
   modelConfig: {
     type: 'api',
-    apiBaseUrl: 'https://api.openai.com/v1',
+    apiBaseUrl: pollinationsTemplate.apiBaseUrl,
     apiKey: '',
-    modelId: 'gpt-4o',
+    modelId: 'openai',
     localModelPath: '',
     localModelSize: '7B',
   },
