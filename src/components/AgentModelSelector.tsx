@@ -78,7 +78,7 @@ export default function AgentModelSelector({
 
     return (
       <div className="flex items-center gap-2">
-        <Cpu className="h-3.5 w-3.5 text-emerald-400" />
+        <Cpu className="h-3.5 w-3.5 text-cyan-400" />
         <span className="truncate text-[12px] text-zinc-200">{model.name}</span>
         {assignedModels.length > 1 && (
           <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
@@ -147,7 +147,7 @@ export default function AgentModelSelector({
                   className={cn(
                     'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition',
                     assignedModels.includes(model.id) && !useOpenAI
-                      ? 'bg-emerald-500/10 text-emerald-200'
+                      ? 'bg-cyan-500/10 text-cyan-200'
                       : 'text-zinc-300 hover:bg-zinc-800/50'
                   )}
                 >
@@ -161,7 +161,7 @@ export default function AgentModelSelector({
                     </div>
                   </div>
                   {assignedModels.includes(model.id) && !useOpenAI && (
-                    <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    <Check className="h-3.5 w-3.5 text-cyan-400" />
                   )}
                 </button>
               ))}
