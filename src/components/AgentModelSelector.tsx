@@ -2,9 +2,11 @@ import { Check, ChevronDown, Cpu, Globe, Zap } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Settings } from '../types';
 import { cn } from '../utils/cn';
+import { resolveModelForAgent } from '../utils/orchestrator';
 
 interface AgentModelSelectorProps {
   agentId: string;
+  agentName?: string;
   settings: Settings;
   onUpdateAssignment: (agentId: string, modelIds: string[]) => void;
 }
@@ -20,12 +22,12 @@ export default function AgentModelSelector({
   const assignedModels = settings.agentModelAssignments[agentId] || [];
   const localModels = settings.localModels.filter(m => m.testStatus === 'passed');
 
-  // Get selected provider and its models
   const selectedProvider = settings.providerTemplates.find(p => p.id === settings.selectedProviderId);
   const selectedProviderModels = selectedProvider?.models || [];
+  const localModelIds = new Set(localModels.map(model => model.id));
 
-  // Default to OpenAI (or selected provider) if no local models assigned
-  const useOpenAI = assignedModels.length === 0 || assignedModels.includes('openai');
+  const resolvedModel = resolveModelForAgent(agentId, settings);
+  const usingRemoteModel = resolvedModel.source !== 'local';
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -39,19 +41,15 @@ export default function AgentModelSelector({
   }, []);
 
   const handleToggleModel = (modelId: string) => {
-    const current = assignedModels.includes('openai') ? ['openai'] : [...assignedModels];
-    const hasOpenAI = current.includes('openai');
-
     let next: string[];
 
     if (modelId === 'openai') {
-      // Toggle OpenAI - clears all local models when selected
-      next = hasOpenAI ? [] : ['openai'];
+      next = ['openai'];
     } else {
-      // Toggle local model - remove OpenAI if selecting local model
-      next = current.includes(modelId)
-        ? current.filter(id => id !== modelId)
-        : [...current.filter(id => id !== 'openai'), modelId];
+      const currentLocalAssignments = assignedModels.filter(id => localModelIds.has(id));
+      next = currentLocalAssignments.includes(modelId)
+        ? currentLocalAssignments.filter(id => id !== modelId)
+        : [...currentLocalAssignments, modelId];
     }
 
     onUpdateAssignment(agentId, next);
@@ -59,30 +57,23 @@ export default function AgentModelSelector({
   };
 
   const getDisplayModel = () => {
-    if (useOpenAI) {
-      // Check if using a selected provider model
-      if (selectedProvider && selectedProviderModels.length > 0) {
-        const selectedModel = selectedProviderModels.find(m => m.id === settings.selectedModelId);
-        return (
-          <div className="flex items-center gap-2">
-            <Zap className="h-3.5 w-3.5 text-violet-400" />
-            <span className="text-[12px] text-zinc-200">
-              {selectedModel?.name || settings.selectedModelId || settings.customModelId || 'gpt-4o'}
-            </span>
-          </div>
-        );
-      }
+    if (usingRemoteModel) {
+      const usingProvider = resolvedModel.source === 'provider';
       return (
         <div className="flex items-center gap-2">
-          <Globe className="h-3.5 w-3.5 text-zinc-400" />
+          {usingProvider ? (
+            <Zap className="h-3.5 w-3.5 text-violet-400" />
+          ) : (
+            <Globe className="h-3.5 w-3.5 text-zinc-400" />
+          )}
           <span className="text-[12px] text-zinc-200">
-            {settings.customModelId || 'gpt-4o'}
+            {resolvedModel.modelName || settings.customModelId || 'gpt-4o'}
           </span>
         </div>
       );
     }
 
-    const model = localModels.find(m => m.id === assignedModels[0]);
+    const model = localModels.find(m => m.id === resolvedModel.modelId);
     if (!model) {
       return (
         <div className="flex items-center gap-2">
@@ -96,9 +87,9 @@ export default function AgentModelSelector({
       <div className="flex items-center gap-2">
         <Cpu className="h-3.5 w-3.5 text-cyan-400" />
         <span className="truncate text-[12px] text-zinc-200">{model.name}</span>
-        {assignedModels.length > 1 && (
+        {assignedModels.filter(id => localModelIds.has(id)).length > 1 && (
           <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
-            +{assignedModels.length - 1}
+            +{assignedModels.filter(id => localModelIds.has(id)).length - 1}
           </span>
         )}
       </div>
@@ -143,7 +134,7 @@ export default function AgentModelSelector({
                   }}
                   className={cn(
                     'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition',
-                    useOpenAI && settings.selectedModelId === model.id
+                    assignedModels.includes(model.id) || (assignedModels.length === 0 && settings.selectedModelId === model.id)
                       ? 'bg-violet-500/10 text-violet-200'
                       : 'text-zinc-300 hover:bg-zinc-800/50'
                   )}
@@ -155,7 +146,7 @@ export default function AgentModelSelector({
                       <div className="text-[10px] text-zinc-500 truncate">{model.id}</div>
                     </div>
                   </div>
-                  {useOpenAI && settings.selectedModelId === model.id && (
+                  {(assignedModels.includes(model.id) || (assignedModels.length === 0 && settings.selectedModelId === model.id)) && (
                     <Check className="h-3.5 w-3.5 text-violet-400" />
                   )}
                 </button>
@@ -169,12 +160,12 @@ export default function AgentModelSelector({
             </>
           )}
 
-          {/* OpenAI Option (fallback) */}
+          {/* OpenAI-compatible Option (fallback) */}
           <button
             onClick={() => handleToggleModel('openai')}
             className={cn(
               'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition',
-              useOpenAI && !selectedProviderModels.length
+              (assignedModels.includes('openai') || (assignedModels.length === 0 && !selectedProviderModels.length))
                 ? 'bg-violet-500/10 text-violet-200'
                 : 'text-zinc-300 hover:bg-zinc-800/50'
             )}
@@ -182,13 +173,13 @@ export default function AgentModelSelector({
             <div className="flex items-center gap-2">
               <Globe className="h-4 w-4" />
               <div>
-                <div className="text-[12px] font-medium">OpenAI API</div>
+                <div className="text-[12px] font-medium">OpenAI-compatible API</div>
                 <div className="text-[10px] text-zinc-500">
                   {settings.customModelId || 'gpt-4o'}
                 </div>
               </div>
             </div>
-            {useOpenAI && !selectedProviderModels.length && <Check className="h-3.5 w-3.5 text-violet-400" />}
+            {(assignedModels.includes('openai') || (assignedModels.length === 0 && !selectedProviderModels.length)) && <Check className="h-3.5 w-3.5 text-violet-400" />}
           </button>
 
           {/* Local Models */}
@@ -204,7 +195,7 @@ export default function AgentModelSelector({
                   onClick={() => handleToggleModel(model.id)}
                   className={cn(
                     'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition',
-                    assignedModels.includes(model.id) && !useOpenAI
+                    assignedModels.includes(model.id)
                       ? 'bg-cyan-500/10 text-cyan-200'
                       : 'text-zinc-300 hover:bg-zinc-800/50'
                   )}
@@ -218,7 +209,7 @@ export default function AgentModelSelector({
                       </div>
                     </div>
                   </div>
-                  {assignedModels.includes(model.id) && !useOpenAI && (
+                  {assignedModels.includes(model.id) && (
                     <Check className="h-3.5 w-3.5 text-cyan-400" />
                   )}
                 </button>

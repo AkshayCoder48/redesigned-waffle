@@ -202,7 +202,26 @@ export default function App() {
   }, []);
 
   const addMessage = (m: Message) => {
-    setConvos(prev => prev.map(c => c.id === activeId ? { ...c, messages: [...c.messages, m], title: c.messages.length <= 2 ? m.content.slice(0, 48) : c.title } : c));
+    setConvos(prev => prev.map(c => c.id === activeId ? {
+      ...c,
+      messages: [...c.messages, m],
+      title: m.role === 'user' && c.messages.length <= 2 ? m.content.slice(0, 48) : c.title,
+    } : c));
+  };
+
+  const updateMessage = (messageId: string, patch: Partial<Message>) => {
+    setConvos(prev => prev.map(c => c.id === activeId ? {
+      ...c,
+      messages: c.messages.map(m => m.id === messageId ? { ...m, ...patch } : m),
+    } : c));
+  };
+
+  const appendToMessage = (messageId: string, delta: string) => {
+    if (!delta) return;
+    setConvos(prev => prev.map(c => c.id === activeId ? {
+      ...c,
+      messages: c.messages.map(m => m.id === messageId ? { ...m, content: `${m.content}${delta}` } : m),
+    } : c));
   };
 
   const updateAgent = (id: string, patch: Partial<Agent>) => {
@@ -225,6 +244,13 @@ export default function App() {
     setConvos(prev => prev.map(c => c.id === activeId ? {
       ...c,
       messages: c.messages.map(m => m.id === id ? { ...m, tool: m.tool ? { ...m.tool, status: 'done', detail: result } : m.tool } : m)
+    } : c));
+  };
+
+  const failTool = (id: string, result?: string) => {
+    setConvos(prev => prev.map(c => c.id === activeId ? {
+      ...c,
+      messages: c.messages.map(m => m.id === id ? { ...m, tool: m.tool ? { ...m.tool, status: 'error', detail: result } : m.tool } : m),
     } : c));
   };
 
@@ -379,28 +405,71 @@ export default function App() {
     const toolId = await runTool('text_generation', text.slice(0, 120));
     await sleep(300);
 
-    const { content, agentName } = await orchestrator.generateTextViaPollinations(
-      text,
-      agentId,
-      {
-        modelId: state.settings.selectedModelId || state.settings.customModelId,
-        apiKey: state.settings.apiKey,
-      }
-    );
-    completeTool(toolId);
-    updateAgent(agentId, { status: 'completed', progress: 100 });
+    const modelResolution = orchestrator.resolveModelForAgent(agentId, state.settings);
+    const generationModelId = modelResolution.source === 'local'
+      ? (state.settings.selectedModelId || state.settings.customModelId || 'gpt-4o')
+      : modelResolution.modelId;
+    const generationModelName = modelResolution.source === 'local'
+      ? (state.settings.providerTemplates
+        .find(p => p.id === state.settings.selectedProviderId)
+        ?.models.find(m => m.id === generationModelId)?.name || generationModelId)
+      : modelResolution.modelName;
 
-    // Get model info
-    const modelId = orchestrator.getModelForAgent(agentId, intent, state.settings);
-
+    const assistantMsgId = uid('m_');
     addMessage({
-      id: uid('m_'),
+      id: assistantMsgId,
       role: 'assistant',
-      content,
+      content: '',
       ts: Date.now(),
-      modelId,
-      agentName,
+      modelId: generationModelName,
+      agentName: orchestrator.getAgentDisplayName(agentId),
     });
+
+    try {
+      const { content, agentName } = await orchestrator.generateTextViaOpenAICompatible(
+        text,
+        agentId,
+        {
+          modelId: generationModelId,
+          apiKey: state.settings.apiKey,
+          baseURL: state.settings.apiBaseUrl,
+          stream: true,
+          onToken: (token) => {
+            appendToMessage(assistantMsgId, token);
+          },
+        }
+      );
+
+      if (!content.trim()) {
+        updateMessage(assistantMsgId, {
+          content: 'No response generated. Please verify your selected provider and model.',
+          agentName,
+          modelId: generationModelName,
+        });
+      } else {
+        updateMessage(assistantMsgId, {
+          content,
+          agentName,
+          modelId: generationModelName,
+        });
+      }
+
+      completeTool(toolId, 'done');
+      updateAgent(agentId, { status: 'completed', progress: 100 });
+    } catch (error) {
+      const details = error instanceof Error
+        ? error.message
+        : 'Unknown error while calling the OpenAI-compatible endpoint.';
+
+      failTool(toolId, 'failed');
+      updateAgent(agentId, { status: 'error', progress: 100 });
+      updateMessage(assistantMsgId, {
+        content: `Generation failed. ${details}`,
+        agentName: 'System',
+        modelId: generationModelName,
+      });
+    }
+
     setIsWorking(false);
   };
 
@@ -647,7 +716,11 @@ export default function App() {
                     <span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" /> WebContainer FS ready</span>
                     <span className="inline-flex items-center gap-1"><FolderTree className="h-3 w-3" /> /src /agents /models /skills</span>
                   </div>
-                  <div>Pollinations • gen.pollinations.ai</div>
+                  <div className="max-w-[260px] truncate">
+                    {state.settings.providerTemplates.find(p => p.id === state.settings.selectedProviderId)?.name || 'OpenAI-compatible provider'}
+                    {' • '}
+                    {state.settings.apiBaseUrl}
+                  </div>
                 </div>
               </div>
             </div>
