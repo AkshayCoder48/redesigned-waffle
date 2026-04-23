@@ -16,7 +16,7 @@ export interface OrchestratorDecision {
  */
 export function detectIntent(message: string): OrchestratorDecision {
   const lower = message.toLowerCase();
-  
+
   // Image generation
   if (
     lower.startsWith('/image') ||
@@ -30,7 +30,7 @@ export function detectIntent(message: string): OrchestratorDecision {
       reasoning: 'User wants to generate an image',
     };
   }
-  
+
   // Video generation
   if (
     lower.startsWith('/video') ||
@@ -43,7 +43,7 @@ export function detectIntent(message: string): OrchestratorDecision {
       reasoning: 'User wants to generate a video',
     };
   }
-  
+
   // Audio generation
   if (
     lower.startsWith('/audio') ||
@@ -56,7 +56,7 @@ export function detectIntent(message: string): OrchestratorDecision {
       reasoning: 'User wants to generate audio/speech',
     };
   }
-  
+
   // Code-related tasks
   if (
     lower.startsWith('/code') ||
@@ -69,7 +69,7 @@ export function detectIntent(message: string): OrchestratorDecision {
       reasoning: 'User is working on code',
     };
   }
-  
+
   // Research tasks
   if (
     lower.startsWith('/research') ||
@@ -82,7 +82,7 @@ export function detectIntent(message: string): OrchestratorDecision {
       reasoning: 'User is requesting research or deep analysis',
     };
   }
-  
+
   // Default to general chat
   return {
     intent: 'general',
@@ -103,27 +103,49 @@ export function getModelForAgent(
     customModelId: string;
     localModels: Array<{ id: string; name: string; format: string }>;
     agentModelAssignments: Record<string, string[]>;
+    selectedProviderId?: string;
+    selectedModelId?: string;
+    providerTemplates?: Array<{
+      id: string;
+      name: string;
+      models: Array<{ id: string; name: string }>;
+    }>;
   }
 ): string {
   const assignedModels = settings.agentModelAssignments[agentId];
-  
+
   // If agent has specific models assigned, use them
   if (assignedModels && assignedModels.length > 0) {
     const localModel = settings.localModels.find(m => assignedModels.includes(m.id));
     if (localModel) {
       return localModel.name;
     }
-    // If 'openai' is assigned, use OpenAI model
+    // If 'openai' is assigned, use OpenAI model or selected provider model
     if (assignedModels.includes('openai')) {
+      // Check if we have a selected provider with models
+      if (settings.selectedProviderId && settings.providerTemplates) {
+        const provider = settings.providerTemplates.find(p => p.id === settings.selectedProviderId);
+        if (provider && provider.models.length > 0) {
+          const selectedModel = provider.models.find(m => m.id === settings.selectedModelId);
+          return selectedModel?.name || settings.selectedModelId || settings.customModelId || 'gpt-4o';
+        }
+      }
       return settings.customModelId || 'gpt-4o';
     }
   }
-  
-  // Default behavior
+
+  // Default behavior - check for selected provider
   if (settings.connectionType === 'openai') {
+    if (settings.selectedProviderId && settings.providerTemplates) {
+      const provider = settings.providerTemplates.find(p => p.id === settings.selectedProviderId);
+      if (provider && provider.models.length > 0) {
+        const selectedModel = provider.models.find(m => m.id === settings.selectedModelId);
+        return selectedModel?.name || settings.selectedModelId || settings.customModelId || 'gpt-4o';
+      }
+    }
     return settings.customModelId || 'gpt-4o';
   }
-  
+
   // For local, return first available model or placeholder
   return settings.localModels[0]?.name || 'No model loaded';
 }
@@ -161,12 +183,42 @@ export function getPollinationsUrl(
  */
 export async function generateTextViaPollinations(
   prompt: string,
-  agentId: string
+  agentId: string,
+  options?: {
+    modelId?: string;
+    apiKey?: string;
+  }
 ): Promise<{ content: string; agentName: string }> {
   try {
-    const response = await fetch(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`);
-    const content = await response.text();
-    
+    const model = options?.modelId || 'openai';
+    const apiKey = options?.apiKey || '';
+
+    // Use the gen.pollinations.ai OpenAI-compatible endpoint
+    const response = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey && { 'Authorization': `Bearer ${apiKey}` }),
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        stream: false,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Pollinations API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || 'No response generated.';
+
     // Map agent ID to display name
     const agentNames: Record<string, string> = {
       research: 'Research Agent',
@@ -177,15 +229,20 @@ export async function generateTextViaPollinations(
       testing: 'Testing Agent',
       uiux: 'UI/UX Agent',
       data: 'Data Agent',
+      debugging: 'Debugging Agent',
+      study: 'Study Assistant',
+      documentation: 'Documentation Agent',
+      api: 'API Integration Agent',
     };
-    
+
     return {
       content,
       agentName: agentNames[agentId] || 'Agent',
     };
   } catch (error) {
+    console.error('Pollinations text generation error:', error);
     return {
-      content: 'Text generation failed. Please try again.',
+      content: `Text generation failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please check your API key and try again.`,
       agentName: 'System',
     };
   }

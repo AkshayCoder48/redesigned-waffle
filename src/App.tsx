@@ -379,7 +379,14 @@ export default function App() {
     const toolId = await runTool('text_generation', text.slice(0, 120));
     await sleep(300);
 
-    const { content, agentName } = await orchestrator.generateTextViaPollinations(text, agentId);
+    const { content, agentName } = await orchestrator.generateTextViaPollinations(
+      text,
+      agentId,
+      {
+        modelId: state.settings.selectedModelId || state.settings.customModelId,
+        apiKey: state.settings.apiKey,
+      }
+    );
     completeTool(toolId);
     updateAgent(agentId, { status: 'completed', progress: 100 });
 

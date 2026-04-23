@@ -13,8 +13,12 @@ import {
   Trash2,
   Info,
   Shield,
+  Plus,
+  ChevronDown,
+  Save,
+  Zap,
 } from 'lucide-react';
-import { Settings, ConnectionType, ModelFile } from '../types';
+import { Settings, ConnectionType, ModelFile, ProviderTemplate, Model } from '../types';
 import { testModel, type ModelTestResult } from '../utils/testModel';
 import { cn } from '../utils/cn';
 
@@ -25,13 +29,22 @@ interface SettingsPanelProps {
   onUpdateSettings: (settings: Settings) => void;
 }
 
-type Tab = 'connection' | 'models' | 'upload';
+type Tab = 'connection' | 'models' | 'upload' | 'providers';
 
 export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSettings }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('connection');
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testProgress, setTestProgress] = useState<{ progress: number; message: string } | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<ProviderTemplate | null>(null);
+  const [showNewTemplateForm, setShowNewTemplateForm] = useState(false);
+  const [newTemplate, setNewTemplate] = useState<Partial<ProviderTemplate>>({
+    name: '',
+    description: '',
+    apiBaseUrl: '',
+    models: [],
+  });
+  const [newModel, setNewModel] = useState<Partial<Model>>({ id: '', name: '', description: '' });
 
   const updateSettings = (updates: Partial<Settings>) => {
     onUpdateSettings({ ...settings, ...updates });
@@ -123,6 +136,98 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     });
   };
 
+  const handleSelectProvider = (providerId: string) => {
+    const provider = settings.providerTemplates.find(p => p.id === providerId);
+    if (provider) {
+      updateSettings({
+        selectedProviderId: providerId,
+        selectedModelId: provider.models[0]?.id,
+        apiBaseUrl: provider.apiBaseUrl,
+        customModelId: provider.models[0]?.id || '',
+      });
+    }
+  };
+
+  const handleSelectModel = (modelId: string) => {
+    updateSettings({
+      selectedModelId: modelId,
+      customModelId: modelId,
+    });
+  };
+
+  const handleSaveNewTemplate = () => {
+    if (!newTemplate.name || !newTemplate.apiBaseUrl) {
+      alert('Please fill in the provider name and API base URL');
+      return;
+    }
+
+    const template: ProviderTemplate = {
+      id: `provider_${Date.now()}`,
+      name: newTemplate.name,
+      description: newTemplate.description || '',
+      apiBaseUrl: newTemplate.apiBaseUrl,
+      models: newTemplate.models || [],
+    };
+
+    updateSettings({
+      providerTemplates: [...settings.providerTemplates, template],
+    });
+
+    setNewTemplate({ name: '', description: '', apiBaseUrl: '', models: [] });
+    setShowNewTemplateForm(false);
+  };
+
+  const handleDeleteTemplate = (templateId: string) => {
+    const template = settings.providerTemplates.find(t => t.id === templateId);
+    if (template?.isDefault) {
+      alert('Cannot delete the default Pollinations template');
+      return;
+    }
+    if (!confirm('Are you sure you want to delete this provider template?')) return;
+
+    const updatedTemplates = settings.providerTemplates.filter(t => t.id !== templateId);
+    updateSettings({
+      providerTemplates: updatedTemplates,
+      selectedProviderId: settings.selectedProviderId === templateId
+        ? updatedTemplates[0]?.id
+        : settings.selectedProviderId,
+    });
+  };
+
+  const handleAddModelToTemplate = (templateId: string) => {
+    if (!newModel.id || !newModel.name) {
+      alert('Please fill in the model ID and name');
+      return;
+    }
+
+    const updatedTemplates = settings.providerTemplates.map(t => {
+      if (t.id === templateId) {
+        return {
+          ...t,
+          models: [...t.models, { id: newModel.id!, name: newModel.name!, description: newModel.description }],
+        };
+      }
+      return t;
+    });
+
+    updateSettings({ providerTemplates: updatedTemplates });
+    setNewModel({ id: '', name: '', description: '' });
+  };
+
+  const handleRemoveModelFromTemplate = (templateId: string, modelId: string) => {
+    const updatedTemplates = settings.providerTemplates.map(t => {
+      if (t.id === templateId) {
+        return {
+          ...t,
+          models: t.models.filter(m => m.id !== modelId),
+        };
+      }
+      return t;
+    });
+
+    updateSettings({ providerTemplates: updatedTemplates });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -149,7 +254,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
         {/* Tabs */}
         <div className="flex border-b border-white/5 px-6">
-          {(['connection', 'models', 'upload'] as Tab[]).map(tab => (
+          {(['connection', 'providers', 'models', 'upload'] as Tab[]).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -170,6 +275,220 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
         {/* Content */}
         <div className="max-h-[500px] overflow-y-auto p-6">
+          {activeTab === 'providers' && (
+            <div className="space-y-6">
+              {/* Provider Templates List */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-[13px] font-medium text-zinc-200">
+                    <Zap className="h-4 w-4 text-violet-400" /> Provider Templates
+                  </label>
+                  <button
+                    onClick={() => setShowNewTemplateForm(!showNewTemplateForm)}
+                    className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-violet-500"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Template
+                  </button>
+                </div>
+
+                {/* New Template Form */}
+                {showNewTemplateForm && (
+                  <div className="rounded-xl border border-white/10 bg-zinc-900/50 p-4 space-y-3">
+                    <div>
+                      <label className="mb-1.5 block text-[12px] font-medium text-zinc-300">Provider Name</label>
+                      <input
+                        type="text"
+                        value={newTemplate.name}
+                        onChange={e => setNewTemplate({ ...newTemplate, name: e.target.value })}
+                        placeholder="e.g., My Custom Provider"
+                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none focus:ring-1 focus:ring-violet-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[12px] font-medium text-zinc-300">API Base URL</label>
+                      <input
+                        type="text"
+                        value={newTemplate.apiBaseUrl}
+                        onChange={e => setNewTemplate({ ...newTemplate, apiBaseUrl: e.target.value })}
+                        placeholder="https://api.example.com/v1"
+                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none focus:ring-1 focus:ring-violet-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[12px] font-medium text-zinc-300">Description</label>
+                      <textarea
+                        value={newTemplate.description}
+                        onChange={e => setNewTemplate({ ...newTemplate, description: e.target.value })}
+                        placeholder="Brief description of this provider"
+                        rows={2}
+                        className="w-full resize-none rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none focus:ring-1 focus:ring-violet-500/20"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSaveNewTemplate}
+                        className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-cyan-500"
+                      >
+                        <Save className="h-3.5 w-3.5" /> Save Template
+                      </button>
+                      <button
+                        onClick={() => setShowNewTemplateForm(false)}
+                        className="rounded-lg border border-white/10 px-3 py-1.5 text-[12px] font-medium text-zinc-300 transition hover:bg-white/5"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Provider Cards */}
+                <div className="space-y-3">
+                  {settings.providerTemplates.map(template => (
+                    <div
+                      key={template.id}
+                      className={cn(
+                        'rounded-xl border p-4 transition',
+                        settings.selectedProviderId === template.id
+                          ? 'border-violet-500/30 bg-violet-500/10'
+                          : 'border-white/10 bg-zinc-900/40 hover:bg-zinc-900/60'
+                      )}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-[13px] font-semibold text-zinc-100">{template.name}</h3>
+                            {template.isDefault && (
+                              <span className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-300">
+                                Default
+                              </span>
+                            )}
+                            {settings.selectedProviderId === template.id && (
+                              <Check className="h-3.5 w-3.5 text-cyan-400" />
+                            )}
+                          </div>
+                          <p className="mt-1 text-[11px] text-zinc-400">{template.description}</p>
+                          <p className="mt-1 text-[10px] text-zinc-500 font-mono">{template.apiBaseUrl}</p>
+                          <p className="mt-1.5 text-[11px] text-zinc-500">
+                            {template.models.length} model{template.models.length !== 1 ? 's' : ''} available
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleSelectProvider(template.id)}
+                            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/10"
+                            disabled={settings.selectedProviderId === template.id}
+                          >
+                            Select
+                          </button>
+                          {!template.isDefault && (
+                            <button
+                              onClick={() => handleDeleteTemplate(template.id)}
+                              className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/5 hover:text-red-400"
+                              title="Delete template"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Model List for Selected Provider */}
+                      {settings.selectedProviderId === template.id && template.models.length > 0 && (
+                        <div className="mt-4 space-y-2 border-t border-white/5 pt-4">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-zinc-400">Available Models</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                placeholder="Add model ID"
+                                value={newModel.id}
+                                onChange={e => setNewModel({ ...newModel, id: e.target.value })}
+                                className="w-24 rounded-lg border border-white/10 bg-zinc-900/50 px-2 py-1 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Model name"
+                                value={newModel.name}
+                                onChange={e => setNewModel({ ...newModel, name: e.target.value })}
+                                className="w-32 rounded-lg border border-white/10 bg-zinc-900/50 px-2 py-1 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/50 focus:outline-none"
+                              />
+                              <button
+                                onClick={() => handleAddModelToTemplate(template.id)}
+                                className="rounded-lg bg-violet-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-violet-500"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid gap-2 max-h-40 overflow-y-auto">
+                            {template.models.map(model => (
+                              <div
+                                key={model.id}
+                                className={cn(
+                                  'flex items-start justify-between rounded-lg border px-2.5 py-2 transition',
+                                  settings.selectedModelId === model.id
+                                    ? 'border-cyan-500/30 bg-cyan-500/10'
+                                    : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
+                                )}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[12px] font-medium text-zinc-100 truncate">{model.name}</span>
+                                    {settings.selectedModelId === model.id && (
+                                      <Check className="h-3 w-3 text-cyan-400 shrink-0" />
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-zinc-500 font-mono truncate">{model.id}</div>
+                                  {model.description && (
+                                    <div className="mt-0.5 text-[10px] text-zinc-400 truncate">{model.description}</div>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 ml-2">
+                                  <button
+                                    onClick={() => handleSelectModel(model.id)}
+                                    className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300 transition hover:bg-white/10"
+                                    disabled={settings.selectedModelId === model.id}
+                                  >
+                                    Use
+                                  </button>
+                                  <button
+                                    onClick={() => handleRemoveModelFromTemplate(template.id, model.id)}
+                                    className="rounded p-0.5 text-zinc-500 transition hover:bg-white/5 hover:text-red-400"
+                                    title="Remove model"
+                                  >
+                                    <XIcon className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Selected Model Display */}
+                      {settings.selectedProviderId === template.id && settings.selectedModelId && (
+                        <div className="mt-3 flex items-center gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+                          <Check className="h-3.5 w-3.5 text-cyan-400" />
+                          <span className="text-[11px] text-cyan-100">
+                            Using: {template.models.find(m => m.id === settings.selectedModelId)?.name || settings.selectedModelId}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Info Box */}
+              <div className="flex items-start gap-3 rounded-xl border border-white/5 bg-zinc-900/40 px-4 py-3">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+                <div className="text-[12px] leading-relaxed text-zinc-400">
+                  Provider templates allow you to save multiple AI providers with their available models. Select a provider and model to use with your agents. The Pollinations AI template is pre-configured with 60+ models.
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'connection' && (
             <div className="space-y-6">
               {/* Connection Type */}
@@ -226,6 +545,30 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
               {/* OpenAI Settings */}
               {settings.connectionType === 'openai' && (
                 <div className="space-y-4">
+                  {/* Selected Provider/Model Info */}
+                  {settings.selectedProviderId && (
+                    <div className="flex items-start gap-3 rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+                      <Zap className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-medium text-violet-100">
+                            {settings.providerTemplates.find(p => p.id === settings.selectedProviderId)?.name || 'Selected Provider'}
+                          </span>
+                          <span className="text-zinc-500">•</span>
+                          <span className="text-[12px] font-medium text-zinc-200 truncate">
+                            {settings.providerTemplates.find(p => p.id === settings.selectedProviderId)?.models.find(m => m.id === settings.selectedModelId)?.name || settings.selectedModelId || 'No model selected'}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setActiveTab('providers')}
+                          className="mt-1 text-[11px] text-violet-300 hover:text-violet-200 transition"
+                        >
+                          Manage providers & models →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="mb-2 block text-[13px] font-medium text-zinc-200">
                       API Key

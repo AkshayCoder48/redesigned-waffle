@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Cpu, Globe } from 'lucide-react';
+import { Check, ChevronDown, Cpu, Globe, Zap } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Settings } from '../types';
 import { cn } from '../utils/cn';
@@ -20,7 +20,11 @@ export default function AgentModelSelector({
   const assignedModels = settings.agentModelAssignments[agentId] || [];
   const localModels = settings.localModels.filter(m => m.testStatus === 'passed');
 
-  // Default to OpenAI if no local models assigned
+  // Get selected provider and its models
+  const selectedProvider = settings.providerTemplates.find(p => p.id === settings.selectedProviderId);
+  const selectedProviderModels = selectedProvider?.models || [];
+
+  // Default to OpenAI (or selected provider) if no local models assigned
   const useOpenAI = assignedModels.length === 0 || assignedModels.includes('openai');
 
   useEffect(() => {
@@ -56,6 +60,18 @@ export default function AgentModelSelector({
 
   const getDisplayModel = () => {
     if (useOpenAI) {
+      // Check if using a selected provider model
+      if (selectedProvider && selectedProviderModels.length > 0) {
+        const selectedModel = selectedProviderModels.find(m => m.id === settings.selectedModelId);
+        return (
+          <div className="flex items-center gap-2">
+            <Zap className="h-3.5 w-3.5 text-violet-400" />
+            <span className="text-[12px] text-zinc-200">
+              {selectedModel?.name || settings.selectedModelId || settings.customModelId || 'gpt-4o'}
+            </span>
+          </div>
+        );
+      }
       return (
         <div className="flex items-center gap-2">
           <Globe className="h-3.5 w-3.5 text-zinc-400" />
@@ -110,13 +126,55 @@ export default function AgentModelSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute z-10 mt-1 w-full rounded-xl border border-white/10 bg-zinc-900/95 p-2 shadow-xl backdrop-blur-sm">
-          {/* OpenAI Option */}
+        <div className="absolute z-10 mt-1 w-full rounded-xl border border-white/10 bg-zinc-900/95 p-2 shadow-xl backdrop-blur-sm max-h-[300px] overflow-y-auto">
+          {/* Selected Provider Models */}
+          {selectedProvider && selectedProviderModels.length > 0 && (
+            <>
+              <div className="mb-2 px-3 text-[10px] uppercase tracking-wide text-zinc-500 flex items-center gap-1.5">
+                <Zap className="h-3 w-3" />
+                {selectedProvider.name}
+              </div>
+              {selectedProviderModels.slice(0, 8).map(model => (
+                <button
+                  key={model.id}
+                  onClick={() => {
+                    onUpdateAssignment(agentId, [model.id]);
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition',
+                    useOpenAI && settings.selectedModelId === model.id
+                      ? 'bg-violet-500/10 text-violet-200'
+                      : 'text-zinc-300 hover:bg-zinc-800/50'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Zap className="h-4 w-4" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[12px] font-medium">{model.name}</div>
+                      <div className="text-[10px] text-zinc-500 truncate">{model.id}</div>
+                    </div>
+                  </div>
+                  {useOpenAI && settings.selectedModelId === model.id && (
+                    <Check className="h-3.5 w-3.5 text-violet-400" />
+                  )}
+                </button>
+              ))}
+              {selectedProviderModels.length > 8 && (
+                <div className="px-3 py-2 text-[10px] text-zinc-500 text-center">
+                  +{selectedProviderModels.length - 8} more models • Manage in Settings
+                </div>
+              )}
+              <div className="my-2 border-t border-white/5" />
+            </>
+          )}
+
+          {/* OpenAI Option (fallback) */}
           <button
             onClick={() => handleToggleModel('openai')}
             className={cn(
               'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition',
-              useOpenAI
+              useOpenAI && !selectedProviderModels.length
                 ? 'bg-violet-500/10 text-violet-200'
                 : 'text-zinc-300 hover:bg-zinc-800/50'
             )}
@@ -130,7 +188,7 @@ export default function AgentModelSelector({
                 </div>
               </div>
             </div>
-            {useOpenAI && <Check className="h-3.5 w-3.5 text-violet-400" />}
+            {useOpenAI && !selectedProviderModels.length && <Check className="h-3.5 w-3.5 text-violet-400" />}
           </button>
 
           {/* Local Models */}
@@ -168,9 +226,9 @@ export default function AgentModelSelector({
             </>
           )}
 
-          {localModels.length === 0 && (
+          {localModels.length === 0 && selectedProviderModels.length === 0 && (
             <div className="px-3 py-4 text-center text-[11px] text-zinc-500">
-              No local models available. Upload models in Settings.
+              No models available. Configure providers in Settings.
             </div>
           )}
         </div>

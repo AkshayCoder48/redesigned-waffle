@@ -55,6 +55,21 @@ export interface ModelConfig {
   localModelSize?: string;
 }
 
+export interface Model {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface ProviderTemplate {
+  id: string;
+  name: string;
+  description: string;
+  apiBaseUrl: string;
+  models: Model[];
+  isDefault?: boolean;
+}
+
 export interface ModelFile {
   id: string;
   name: string;
@@ -73,4 +88,7 @@ export interface Settings {
   customModelId: string;
   localModels: ModelFile[];
   agentModelAssignments: Record<string, string[]>;
+  providerTemplates: ProviderTemplate[];
+  selectedProviderId?: string;
+  selectedModelId?: string;
 }
