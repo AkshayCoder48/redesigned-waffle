@@ -28,6 +28,9 @@ export default function AgentModelSelector({
 
   const resolvedModel = resolveModelForAgent(agentId, settings);
   const usingRemoteModel = resolvedModel.source !== 'local';
+  const selectedRemoteModel = selectedProviderModels.find(model => model.id === settings.selectedModelId);
+  const remoteFallbackModelLabel = selectedRemoteModel?.name || settings.selectedModelId || settings.customModelId || 'gpt-4o';
+  const remoteFallbackModelId = selectedRemoteModel?.id || settings.selectedModelId || settings.customModelId || 'gpt-4o';
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -175,7 +178,7 @@ export default function AgentModelSelector({
               <div>
                 <div className="text-[12px] font-medium">OpenAI-compatible API</div>
                 <div className="text-[10px] text-zinc-500">
-                  {settings.customModelId || 'gpt-4o'}
+                  {remoteFallbackModelLabel} ({remoteFallbackModelId})
                 </div>
               </div>
             </div>
