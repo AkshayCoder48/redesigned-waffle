@@ -257,10 +257,10 @@ export default function AgentsPanel({
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500" />
               <div className="text-[11px] leading-relaxed text-zinc-400">
                 <span className="font-medium text-zinc-300">Model Assignment:</span>{' '}
-                Each agent can be assigned specific models. By default, agents use
-                the selected OpenAI-compatible provider. Upload local models in
-                Settings and assign them to agents here for offline or specialized
-                inference.
+                Each agent can be assigned specific models. In OpenAI-compatible mode
+                agents default to the selected provider template, and in local mode
+                they default to validated GGUF/Safetensors uploads. You can override
+                either direction per-agent from the selector above.
               </div>
             </div>
           </div>

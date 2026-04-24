@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
-import { Agent, Task, Message, ModelConfig, AppMode, FileNode, Settings, ProviderTemplate, Model } from '../types';
+import { Agent, Task, Message, ModelConfig, AppMode, FileNode, Settings, ProviderTemplate } from '../types';
 
 interface AppState {
   currentView: string;
@@ -64,6 +64,7 @@ const pollinationsTemplate: ProviderTemplate = {
   name: 'Pollinations AI',
   description: 'OpenAI-compatible API with free tier. Generate text, images, video, and audio.',
   apiBaseUrl: 'https://gen.pollinations.ai/v1',
+  apiKey: '',
   models: [
     { id: 'openai', name: 'GPT-5.4 Nano', description: 'Fast & Balanced with tools' },
     { id: 'openai-fast', name: 'GPT-5 Nano', description: 'Ultra Fast & Affordable' },
@@ -143,6 +144,7 @@ const defaultSettings: Settings = {
   providerTemplates: [pollinationsTemplate],
   selectedProviderId: 'pollinations',
   selectedModelId: 'openai',
+  selectedMarkdownTypeId: 'general',
 };
 
 const loadSettingsFromStorage = (): Settings => {
@@ -151,9 +153,14 @@ const loadSettingsFromStorage = (): Settings => {
     const saved = localStorage.getItem('ai-maos-settings');
     if (saved) {
       const parsed = JSON.parse(saved);
-      const mergedTemplates = parsed.providerTemplates?.length > 0
+      const mergedTemplates = (parsed.providerTemplates?.length > 0
         ? parsed.providerTemplates
-        : defaultSettings.providerTemplates;
+        : defaultSettings.providerTemplates)
+        .map((template: ProviderTemplate) => ({
+          ...template,
+          apiKey: template.apiKey || '',
+          models: template.models || [],
+        }));
 
       const selectedProviderId = parsed.selectedProviderId || defaultSettings.selectedProviderId;
       const selectedProvider = mergedTemplates.find((template: ProviderTemplate) => template.id === selectedProviderId);
@@ -166,10 +173,12 @@ const loadSettingsFromStorage = (): Settings => {
         ...parsed,
         providerTemplates: mergedTemplates,
         selectedProviderId,
-        selectedModelId: parsed.selectedModelId || defaultSettings.selectedModelId,
+        selectedModelId: parsed.selectedModelId || selectedProvider?.models?.[0]?.id || defaultSettings.selectedModelId,
+        selectedMarkdownTypeId: parsed.selectedMarkdownTypeId || defaultSettings.selectedMarkdownTypeId,
         apiBaseUrl: shouldUseProviderBaseUrl
           ? (selectedProvider?.apiBaseUrl || defaultSettings.apiBaseUrl)
           : parsed.apiBaseUrl,
+        apiKey: selectedProvider?.apiKey ?? parsed.apiKey ?? '',
       };
     }
   } catch (error) {

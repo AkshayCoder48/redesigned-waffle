@@ -12,13 +12,6 @@ import {
   Cpu,
   Network,
   Bot,
-  Code2,
-  Search,
-  Globe,
-  TestTube2,
-  BookOpen,
-  Database,
-  Layers3,
   Terminal,
   FolderTree,
   History,
@@ -31,6 +24,8 @@ import AgentsPanel from './components/AgentsPanel';
 import { useAppState } from './store/AppContext';
 import * as orchestrator from './utils/orchestrator';
 import * as fileSystem from './utils/fileSystem';
+import { getMarkdownTypeById, buildMarkdownSystemPrompt } from './utils/markdownStyles';
+import type { Agent } from './types';
 
 type Message = {
   id: string;
@@ -50,114 +45,7 @@ type Conversation = {
   messages: Message[];
 };
 
-type Agent = {
-  id: string;
-  name: string;
-  specialization: string;
-  description: string;
-  icon: keyof typeof iconMap;
-  status: 'idle' | 'working' | 'complete';
-  progress: number;
-  assignedModels?: string[];
-};
-
-type FileNode = {
-  name: string;
-  path: string;
-  type: 'file' | 'folder';
-  content?: string;
-  children?: FileNode[];
-};
-
-const iconMap = {
-  Brain,
-  Bot,
-  Code2,
-  Search,
-  Globe,
-  TestTube2,
-  BookOpen,
-  Database,
-  Layers3,
-  Cpu,
-  Network,
-  Sparkles,
-};
-
 const uid = (p = '') => `${p}${Math.random().toString(36).slice(2, 9)}`;
-
-const prebuiltFS: FileNode = {
-  name: '',
-  path: '/',
-  type: 'folder',
-  children: [
-    { name: 'src', path: '/src', type: 'folder', children: [
-      { name: 'main.tsx', path: '/src/main.tsx', type: 'file', content: '// entry' },
-      { name: 'App.tsx', path: '/src/App.tsx', type: 'file', content: '// AI-MAOS app' },
-    ]},
-    { name: 'public', path: '/public', type: 'folder', children: [] },
-    { name: 'agents', path: '/agents', type: 'folder', children: [] },
-    { name: 'skills', path: '/skills', type: 'folder', children: [
-      { name: 'README.md', path: '/skills/README.md', type: 'file', content: '# Skills\nUpload .md or .zip to extend agents.' }
-    ]},
-    { name: 'models', path: '/models', type: 'folder', children: [] },
-    { name: 'prompts', path: '/prompts', type: 'folder', children: [] },
-    { name: 'workflows', path: '/workflows', type: 'folder', children: [] },
-    { name: 'docs', path: '/docs', type: 'folder', children: [] },
-    { name: 'integrations', path: '/integrations', type: 'folder', children: [
-      { name: 'pollinations.md', path: '/integrations/pollinations.md', type: 'file', content: '# Pollinations\nBase: https://gen.pollinations.ai\n- text: /text/{prompt}\n- image: /image/{prompt}\n- video: /video/{prompt}\n- audio: /audio/{text}' }
-    ]},
-    { name: 'projects', path: '/projects', type: 'folder', children: [] },
-    { name: 'backups', path: '/backups', type: 'folder', children: [] },
-  ],
-};
-
-function findNode(root: FileNode, path: string): FileNode | null {
-  if (root.path === path) return root;
-  if (!root.children) return null;
-  for (const c of root.children) {
-    const found = findNode(c, path);
-    if (found) return found;
-  }
-  return null;
-}
-
-function ensureDir(root: FileNode, path: string) {
-  const parts = path.split('/').filter(Boolean);
-  let cur = root;
-  let built = '';
-  for (const p of parts) {
-    built += '/' + p;
-    let next = cur.children?.find(c => c.path === built && c.type === 'folder');
-    if (!next) {
-      next = { name: p, path: built, type: 'folder', children: [] };
-      cur.children = cur.children || [];
-      cur.children.push(next);
-    }
-    cur = next;
-  }
-  return cur;
-}
-
-function writeFileHelper(root: FileNode, path: string, content: string) {
-  const dir = path.substring(0, path.lastIndexOf('/')) || '/';
-  const name = path.substring(path.lastIndexOf('/') + 1);
-  const parent = ensureDir(root, dir);
-  parent.children = parent.children || [];
-  const existing = parent.children.find(c => c.path === path);
-  if (existing) {
-    existing.content = content;
-    existing.type = 'file';
-  } else {
-    parent.children.push({ name, path, type: 'file', content });
-  }
-}
-
-function listDirHelper(root: FileNode, path: string) {
-  const node = findNode(root, path);
-  if (!node || node.type !== 'folder') return [];
-  return node.children || [];
-}
 
 export default function App() {
   const { state, dispatch } = useAppState();
@@ -180,6 +68,22 @@ export default function App() {
   });
   const [activeId, setActiveId] = useState<string>(convos[0]?.id);
   const active = useMemo(() => convos.find(c => c.id === activeId)!, [convos, activeId]);
+  const selectedProvider = useMemo(
+    () => state.settings.providerTemplates.find((provider) => provider.id === state.settings.selectedProviderId),
+    [state.settings.providerTemplates, state.settings.selectedProviderId]
+  );
+  const selectedMarkdownType = useMemo(
+    () => getMarkdownTypeById(state.settings.selectedMarkdownTypeId),
+    [state.settings.selectedMarkdownTypeId]
+  );
+  const chatModelResolution = useMemo(
+    () => orchestrator.resolveModelForAgent('chat', state.settings),
+    [state.settings]
+  );
+  const localModelStats = useMemo(() => ({
+    passed: state.settings.localModels.filter((model) => model.testStatus === 'passed').length,
+    total: state.settings.localModels.length,
+  }), [state.settings.localModels]);
 
   const [input, setInput] = useState('');
   const [showAgents, setShowAgents] = useState(true);
@@ -406,14 +310,12 @@ export default function App() {
     await sleep(300);
 
     const modelResolution = orchestrator.resolveModelForAgent(agentId, state.settings);
-    const generationModelId = modelResolution.source === 'local'
-      ? (state.settings.selectedModelId || state.settings.customModelId || 'gpt-4o')
-      : modelResolution.modelId;
-    const generationModelName = modelResolution.source === 'local'
-      ? (state.settings.providerTemplates
-        .find(p => p.id === state.settings.selectedProviderId)
-        ?.models.find(m => m.id === generationModelId)?.name || generationModelId)
-      : modelResolution.modelName;
+    const generationModelId = modelResolution.modelId;
+    const generationModelName = modelResolution.modelName;
+    const shouldUseLocalModel = modelResolution.source === 'local';
+    const providerBaseUrl = selectedProvider?.apiBaseUrl || state.settings.apiBaseUrl;
+    const providerApiKey = selectedProvider?.apiKey ?? state.settings.apiKey;
+    const markdownSystemPrompt = buildMarkdownSystemPrompt(state.settings.selectedMarkdownTypeId);
 
     const assistantMsgId = uid('m_');
     addMessage({
@@ -425,14 +327,47 @@ export default function App() {
       agentName: orchestrator.getAgentDisplayName(agentId),
     });
 
+    if (shouldUseLocalModel) {
+      const localModel = state.settings.localModels.find((model) => model.id === generationModelId);
+      const isValidated = localModel?.testStatus === 'passed';
+
+      const localIndicator = [
+        '## Local Model Indicator',
+        `- **Model:** ${localModel?.name || generationModelName}`,
+        `- **Format:** ${localModel?.format || 'unknown'}`,
+        `- **Validation:** ${isValidated ? 'Passed ✅' : 'Not ready ❌'}`,
+        '',
+        isValidated
+          ? 'Local model is selected correctly. This build keeps local uploads separate from OpenAI-compatible requests and does not auto-switch providers.'
+          : 'No validated local model is ready. Upload and validate a GGUF or Safetensors model first.',
+        '',
+        '### Next steps',
+        '1. Keep **Connection Type = Local** for local routing.',
+        '2. Validate a model in **Settings → Models**.',
+        '3. Assign that model in the **Agent Swarm** panel.',
+      ].join('\n');
+
+      updateMessage(assistantMsgId, {
+        content: localIndicator,
+        agentName: orchestrator.getAgentDisplayName(agentId),
+        modelId: localModel?.name || generationModelName,
+      });
+
+      completeTool(toolId, isValidated ? 'local model ready' : 'local model missing');
+      updateAgent(agentId, { status: 'completed', progress: 100 });
+      setIsWorking(false);
+      return;
+    }
+
     try {
       const { content, agentName } = await orchestrator.generateTextViaOpenAICompatible(
         text,
         agentId,
         {
           modelId: generationModelId,
-          apiKey: state.settings.apiKey,
-          baseURL: state.settings.apiBaseUrl,
+          apiKey: providerApiKey,
+          baseURL: providerBaseUrl,
+          systemPrompt: markdownSystemPrompt,
           stream: true,
           onToken: (token) => {
             appendToMessage(assistantMsgId, token);
@@ -442,7 +377,7 @@ export default function App() {
 
       if (!content.trim()) {
         updateMessage(assistantMsgId, {
-          content: 'No response generated. Please verify your selected provider and model.',
+          content: 'No response generated. Please verify your provider template base URL, token, and selected model.',
           agentName,
           modelId: generationModelName,
         });
@@ -716,10 +651,19 @@ export default function App() {
                     <span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" /> WebContainer FS ready</span>
                     <span className="inline-flex items-center gap-1"><FolderTree className="h-3 w-3" /> /src /agents /models /skills</span>
                   </div>
-                  <div className="max-w-[260px] truncate">
-                    {state.settings.providerTemplates.find(p => p.id === state.settings.selectedProviderId)?.name || 'OpenAI-compatible provider'}
-                    {' • '}
-                    {state.settings.apiBaseUrl}
+                  <div className="max-w-[320px] text-right leading-tight">
+                    {chatModelResolution.source === 'local' ? (
+                      <div className="truncate text-cyan-300">
+                        Local mode • {chatModelResolution.modelName} • {localModelStats.passed}/{localModelStats.total} validated
+                      </div>
+                    ) : (
+                      <div className="truncate">
+                        {selectedProvider?.name || 'OpenAI-compatible provider'} • {selectedProvider?.apiBaseUrl || state.settings.apiBaseUrl}
+                      </div>
+                    )}
+                    <div className="truncate text-[10px] text-zinc-500">
+                      Markdown: {selectedMarkdownType.name}
+                    </div>
                   </div>
                 </div>
               </div>

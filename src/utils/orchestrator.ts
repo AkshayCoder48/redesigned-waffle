@@ -76,19 +76,22 @@ interface GenerateTextOptions {
   temperature?: number;
   maxTokens?: number;
   stream?: boolean;
+  systemPrompt?: string;
   onToken?: (token: string, fullText: string) => void;
 }
 
 interface OrchestratorSettingsLike {
   connectionType: 'local' | 'openai';
   customModelId: string;
-  localModels: Array<{ id: string; name: string; format: string }>;
+  localModels: Array<{ id: string; name: string; format: string; testStatus?: 'pending' | 'testing' | 'passed' | 'failed' }>;
   agentModelAssignments: Record<string, string[]>;
   selectedProviderId?: string;
   selectedModelId?: string;
   providerTemplates?: Array<{
     id: string;
     name: string;
+    apiBaseUrl?: string;
+    apiKey?: string;
     models: Array<{ id: string; name: string }>;
   }>;
 }
@@ -188,9 +191,11 @@ export function resolveModelForAgent(
     : undefined;
   const providerModels = provider?.models || [];
 
+  const healthyLocalModels = settings.localModels.filter((model) => model.testStatus !== 'failed');
+
   const findLocalModel = (modelId?: string) => {
     if (!modelId) return undefined;
-    return settings.localModels.find(m => m.id === modelId);
+    return healthyLocalModels.find(m => m.id === modelId);
   };
 
   const findProviderModel = (modelId?: string) => {
@@ -198,7 +203,6 @@ export function resolveModelForAgent(
     return providerModels.find(m => m.id === modelId);
   };
 
-  // Agent-specific assignment takes priority
   for (const assignedId of assignedModels) {
     if (!assignedId || assignedId === 'openai') continue;
 
@@ -227,9 +231,31 @@ export function resolveModelForAgent(
     };
   }
 
-  // Local mode fallback
+  if (assignedModels.includes('openai')) {
+    const selectedProviderModel = findProviderModel(settings.selectedModelId);
+    if (selectedProviderModel) {
+      return {
+        modelId: selectedProviderModel.id,
+        modelName: selectedProviderModel.name,
+        source: 'provider',
+      };
+    }
+
+    const remoteModelId = settings.selectedModelId || settings.customModelId || 'gpt-4o';
+    return {
+      modelId: remoteModelId,
+      modelName: remoteModelId,
+      source: 'custom',
+    };
+  }
+
   if (settings.connectionType === 'local') {
-    const localFallback = findLocalModel(settings.customModelId) || settings.localModels[0];
+    const localFallback =
+      findLocalModel(settings.selectedModelId) ||
+      findLocalModel(settings.customModelId) ||
+      healthyLocalModels.find(model => model.testStatus === 'passed') ||
+      healthyLocalModels[0];
+
     if (localFallback) {
       return {
         modelId: localFallback.id,
@@ -237,9 +263,14 @@ export function resolveModelForAgent(
         source: 'local',
       };
     }
+
+    return {
+      modelId: 'local-model-unavailable',
+      modelName: 'Local model unavailable',
+      source: 'local',
+    };
   }
 
-  // Selected provider model fallback
   const selectedProviderModel = findProviderModel(settings.selectedModelId);
   if (selectedProviderModel) {
     return {
@@ -249,7 +280,6 @@ export function resolveModelForAgent(
     };
   }
 
-  // Manual custom model ID fallback
   const fallbackModelId = settings.selectedModelId || settings.customModelId || 'gpt-4o';
   return {
     modelId: fallbackModelId,
@@ -584,7 +614,7 @@ async function readStreamingText(
 async function requestCompatibleGeneration(
   endpoint: GenerationEndpoint,
   prompt: string,
-  options: Required<Pick<GenerateTextOptions, 'modelId' | 'temperature' | 'maxTokens' | 'stream'>> & Pick<GenerateTextOptions, 'apiKey' | 'onToken'>
+  options: Required<Pick<GenerateTextOptions, 'modelId' | 'temperature' | 'maxTokens' | 'stream'>> & Pick<GenerateTextOptions, 'apiKey' | 'onToken' | 'systemPrompt'>
 ): Promise<string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -599,6 +629,9 @@ async function requestCompatibleGeneration(
     ? {
       model: options.modelId,
       messages: [
+        ...(options.systemPrompt
+          ? [{ role: 'system', content: options.systemPrompt }]
+          : []),
         {
           role: 'user',
           content: prompt,
@@ -610,7 +643,12 @@ async function requestCompatibleGeneration(
     }
     : {
       model: options.modelId,
-      input: prompt,
+      input: options.systemPrompt
+        ? [
+          { role: 'system', content: options.systemPrompt },
+          { role: 'user', content: prompt },
+        ]
+        : prompt,
       temperature: options.temperature,
       max_output_tokens: options.maxTokens,
       stream: options.stream,
@@ -690,6 +728,7 @@ export async function generateTextViaOpenAICompatible(
         stream,
         temperature,
         maxTokens,
+        systemPrompt: options?.systemPrompt,
         onToken: options?.onToken,
       });
 
@@ -746,6 +785,7 @@ export async function generateTextViaPollinations(
     temperature?: number;
     maxTokens?: number;
     stream?: boolean;
+    systemPrompt?: string;
     onToken?: (token: string, fullText: string) => void;
   }
 ): Promise<{ content: string; agentName: string; endpoint?: string }> {

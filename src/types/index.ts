@@ -66,6 +66,7 @@ export interface ProviderTemplate {
   name: string;
   description: string;
   apiBaseUrl: string;
+  apiKey?: string;
   models: Model[];
   isDefault?: boolean;
 }
@@ -91,4 +92,5 @@ export interface Settings {
   providerTemplates: ProviderTemplate[];
   selectedProviderId?: string;
   selectedModelId?: string;
+  selectedMarkdownTypeId?: string;
 }
