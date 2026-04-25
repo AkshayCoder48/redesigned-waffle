@@ -16,4 +16,11 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  build: {
+    rollupOptions: {
+      // Externalize @webcontainer/api - it's only available in browser environments
+      // with proper COOP/COEP headers set
+      external: ['@webcontainer/api'],
+    },
+  },
 });

@@ -47,6 +47,8 @@ import {
   type Modality,
   type GenerationSource,
 } from './utils/routingMatrix';
+import { LoadingScreen } from './components/LoadingScreen';
+import { logPhase, setReady } from './utils/startup';
 
 type Message = {
   id: string;
@@ -85,9 +87,17 @@ const THINKING_PHRASES = [
 export default function App() {
   const { state, dispatch } = useAppState();
 
+  // App loading state for graceful startup
+  const [isAppReady, setIsAppReady] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
   const [convos, setConvos] = useState<Conversation[]>(() => {
-    const saved = localStorage.getItem('ai-maos-convos');
-    if (saved) return JSON.parse(saved);
+    try {
+      const saved = localStorage.getItem('ai-maos-convos');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      console.warn('[App] Failed to parse conversations from localStorage');
+    }
     const first: Conversation = {
       id: uid('c_'),
       title: 'New conversation',
@@ -102,7 +112,7 @@ export default function App() {
     return [first];
   });
   const [activeId, setActiveId] = useState<string>(convos[0]?.id);
-  const active = useMemo(() => convos.find(c => c.id === activeId)!, [convos, activeId]);
+  const active = useMemo(() => convos.find(c => c.id === activeId) || convos[0], [convos, activeId]);
   const selectedProvider = useMemo(
     () => state.settings.providerTemplates.find((provider) => provider.id === state.settings.selectedProviderId),
     [state.settings.providerTemplates, state.settings.selectedProviderId]
@@ -159,20 +169,40 @@ export default function App() {
     return () => clearInterval(interval);
   }, [showThinkingBar]);
 
-  // Initialize WebContainer
+  // Initialize WebContainer - non-blocking, graceful fallback
   useEffect(() => {
+    logPhase('webcontainer', 'Initializing WebContainer');
+    
     const initWebContainer = async () => {
       try {
+        // Only attempt in browser environment with required APIs
+        if (typeof window === 'undefined' || !window.WebContainer) {
+          logPhase('webcontainer', 'WebContainer not available - standalone mode');
+          setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
+          return;
+        }
+        
         const { WebContainer } = await import('@webcontainer/api');
         const instance = await WebContainer.boot();
         webContainerRef.current = instance;
+        logPhase('webcontainer', 'WebContainer initialized');
         setTerminalOutput(prev => [...prev, 'WebContainer initialized']);
       } catch (error) {
         // WebContainer not available in non-browser environments
+        // This is expected in Node.js/test environments
+        logPhase('webcontainer', 'WebContainer initialization failed - standalone mode');
+        console.warn('[WebContainer] Initialization failed:', error);
         setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
       }
     };
+    
+    // Don't block rendering - initialize asynchronously
     initWebContainer();
+    
+    // Mark as ready after a short delay
+    setTimeout(() => {
+      setIsAppReady(true);
+    }, 50);
   }, []);
 
   // Watch target agent
@@ -275,11 +305,15 @@ export default function App() {
     }
   }, [previewUrl, previewPort]);
 
-  // Initialize file system on mount
+  // Initialize file system on mount - non-blocking with graceful fallback
   useEffect(() => {
-    fileSystem.initFileSystem().catch(() => {
-      // Silently handle file system initialization
-    });
+    logPhase('filesystem', 'Initializing file system');
+    fileSystem.initFileSystem()
+      .then(() => logPhase('filesystem', 'File system initialized'))
+      .catch((error) => {
+        console.warn('[FileSystem] Initialization failed:', error);
+        logPhase('filesystem', 'File system using in-memory fallback');
+      });
   }, []);
 
   const addMessage = (m: Message) => {
@@ -800,6 +834,33 @@ Natural language also works: "generate an image of...", "create a video...", "sp
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // Show loading screen only during initial mount
+  // This prevents black screen while React hydrates
+  if (!isAppReady && !initError) {
+    return <LoadingScreen message="Initializing AI-MAOS..." />;
+  }
+
+  // Show error state if initialization failed
+  if (initError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#030712] p-6">
+        <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-zinc-900/80 p-8 text-center">
+          <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-red-500/10">
+            <AlertTriangle className="h-8 w-8 text-red-400" />
+          </div>
+          <h2 className="mb-2 text-xl font-semibold text-white">Failed to initialize</h2>
+          <p className="mb-6 text-sm text-zinc-400">{initError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-xl bg-violet-600 px-4 py-3 font-medium text-white transition hover:bg-violet-500"
+          >
+            Reload page
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#050507] text-zinc-100">
