@@ -252,6 +252,13 @@ export default function App() {
     }
   }, [previewPort]);
 
+  // Helper to check if content contains code during streaming
+  const isStreamingCode = (partialContent: string): boolean => {
+    // Quick check for code patterns during streaming
+    return partialContent.includes('```') || 
+           /import |export |const |let |var |function |class |def |=>|->/.test(partialContent);
+  };
+
   const handleStopProject = useCallback(async () => {
     if (webContainerRef.current) {
       try {
@@ -1067,6 +1074,13 @@ Natural language also works: "generate an image of...", "create a video...", "sp
               onClearTerminal={handleClearTerminal}
               onRefreshPreview={handleRefreshPreview}
             />
+          )}
+
+          {/* Streaming Fade-in Overlay */}
+          {streamingStarted && (
+            <div className="pointer-events-none fixed inset-0 z-40 animate-fade-in">
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#050507]/20" />
+            </div>
           )}
 
           {/* Settings Panel */}

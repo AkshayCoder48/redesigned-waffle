@@ -4,7 +4,7 @@
  * Optimized for instant code rendering during streaming.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Code2, Copy, Check } from 'lucide-react';
 
 // Common utility for copy button
@@ -29,16 +29,21 @@ function CopyButton({ text }: { text: string }) {
 }
 
 // ============ Code Box ============
-export function CodeBox({ content, language: providedLanguage }: { content: string; language?: string }) {
+export function CodeBox({ content, language: providedLanguage, isStreaming = false }: { content: string; language?: string; isStreaming?: boolean }) {
   const language = providedLanguage || detectLanguage(content);
   const lines = content.split('\n');
   
   return (
-    <div className="my-3 overflow-hidden rounded-xl border border-white/10 bg-zinc-950">
+    <div className={`my-3 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 ${isStreaming ? 'animate-pulse-subtle' : ''}`}>
       <div className="flex items-center justify-between border-b border-white/5 bg-zinc-900/80 px-3 py-2">
         <div className="flex items-center gap-2">
           <Code2 className="h-4 w-4 text-violet-400" />
           <span className="text-[11px] font-medium text-zinc-300">{language}</span>
+          {isStreaming && (
+            <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[9px] text-amber-300">
+              Streaming
+            </span>
+          )}
         </div>
         <CopyButton text={content} />
       </div>
@@ -98,9 +103,13 @@ function isCodeContent(text: string): boolean {
   return false;
 }
 
-// Extract code blocks from content
-function extractCodeBlocks(text: string): Array<{ type: 'code' | 'text'; content: string }> {
-  const segments: Array<{ type: 'code' | 'text'; content: string }> = [];
+// Extract code blocks from content with streaming support
+function extractCodeBlocks(text: string): Array<{ type: 'code' | 'text'; content: string; isStreaming?: boolean }> {
+  const segments: Array<{ type: 'code' | 'text'; content: string; isStreaming?: boolean }> = [];
+  
+  // Check for incomplete code block (streaming state)
+  const hasIncompleteCodeBlock = /```[\w]*$/.test(text);
+  const isStreamingCode = /```[\w]*\n/.test(text) && !text.includes('```');
   
   // Check for fenced code blocks first
   const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
@@ -124,7 +133,7 @@ function extractCodeBlocks(text: string): Array<{ type: 'code' | 'text'; content
       segments.push({ 
         type: 'code', 
         content: match[2],
-        language: match[1] || undefined 
+        isStreaming: false
       });
       
       lastIndex = match.index + match[0].length;
@@ -137,6 +146,13 @@ function extractCodeBlocks(text: string): Array<{ type: 'code' | 'text'; content
         segments.push({ type: 'text', content: remaining });
       }
     }
+  } else if (hasIncompleteCodeBlock || isStreamingCode) {
+    // Streaming code block - render as code
+    segments.push({ 
+      type: 'code', 
+      content: text.replace(/```[\w]*\n?/, ''),
+      isStreaming: true 
+    });
   } else {
     // No fenced code blocks - check if entire content is code
     segments.push({ type: isCodeContent(text) ? 'code' : 'text', content: text });
@@ -150,9 +166,10 @@ interface StructuredOutputRendererProps {
   content: string;
   className?: string;
   enableMixedFormats?: boolean;
+  isStreaming?: boolean;
 }
 
-export default function StructuredOutputRenderer({ content, className = '' }: StructuredOutputRendererProps) {
+export default function StructuredOutputRenderer({ content, className = '', isStreaming = false }: StructuredOutputRendererProps) {
   const segments = useMemo(() => {
     if (!content.trim()) return [];
     return extractCodeBlocks(content);
@@ -163,9 +180,9 @@ export default function StructuredOutputRenderer({ content, className = '' }: St
   return (
     <div className={`structured-output ${className}`}>
       {segments.map((segment, i) => (
-        <div key={i}>
+        <div key={i} className={segment.type === 'code' && segment.isStreaming ? 'animate-fade-in' : ''}>
           {segment.type === 'code' ? (
-            <CodeBox content={segment.content} />
+            <CodeBox content={segment.content} isStreaming={segment.isStreaming || (isStreaming && i === segments.length - 1)} />
           ) : (
             <div className="whitespace-pre-wrap text-zinc-100 leading-relaxed">{segment.content}</div>
           )}
