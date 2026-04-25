@@ -18,11 +18,21 @@ import {
   Image as ImageIcon,
   Mic,
   AlertCircle,
+  Video,
+  Lock,
 } from 'lucide-react';
 import { Settings, ConnectionType, ModelFile, ProviderTemplate, Model } from '../types';
 import { testModel, type ModelTestResult } from '../utils/testModel';
 import { writeOPFSFromFile, type OPFSProgress, isOPFSSupported, getCapabilityWarnings, type CapabilityWarning } from '../utils/opfsStorage';
 import { cn } from '../utils/cn';
+import {
+  GENERATION_ROUTING_MATRIX,
+  isSourceAllowedForModality,
+  getAllowedSourcesForModality,
+  getSourceDisplayName,
+  type Modality,
+  type GenerationSource,
+} from '../utils/routingMatrix';
 
 type UploadStatus = 'idle' | 'uploading' | 'validating' | 'processing' | 'ready' | 'error';
 
@@ -42,6 +52,9 @@ interface SettingsPanelProps {
 }
 
 type Tab = 'connection' | 'models' | 'upload' | 'providers';
+
+// Modality tabs for routing matrix visualization
+type ModalityTab = 'text' | 'image' | 'tts' | 'video';
 
 export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSettings }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('connection');
@@ -74,8 +87,21 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     const saved = localStorage.getItem('ai-maos-tts-voice');
     return saved || 'alloy';
   });
+  // Video model selection - persisted independently
+  const [selectedVideoModel, setSelectedVideoModel] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-video-model');
+    return saved || 'wan';
+  });
+  // Text model selection - persisted independently
+  const [selectedTextModel, setSelectedTextModel] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-text-model');
+    return saved || 'openai';
+  });
 
-  // Image models available in Pollinations
+  // Active modality for routing display
+  const [activeModality, setActiveModality] = useState<ModalityTab>('text');
+
+  // Image models available in Pollinations (Cloud only - no local)
   const imageModels = useMemo(() => [
     { id: 'flux', name: 'Flux Schnell', description: 'Fast high-quality image generation' },
     { id: 'zimage', name: 'Z-Image Turbo', description: 'Fast 6B Flux with 2x upscaling' },
@@ -93,6 +119,28 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     { id: 'tts-1', name: 'TTS 1', description: 'Standard text-to-speech' },
     { id: 'tts-1-hd', name: 'TTS 1 HD', description: 'High definition text-to-speech' },
     { id: 'elevenlabs', name: 'ElevenLabs v3', description: 'Expressive voices with emotions' },
+  ], []);
+
+  // Video models - Pollinations only
+  const videoModels = useMemo(() => [
+    { id: 'wan', name: 'Wan 2.6', description: 'Alibaba text/image-to-video with audio' },
+    { id: 'wan-fast', name: 'Wan 2.2', description: 'Fast & cheap text/image-to-video' },
+    { id: 'veo', name: 'Veo 3.1 Fast', description: "Google's video generation model" },
+    { id: 'seedance', name: 'Seedance Lite', description: 'BytePlus video generation' },
+    { id: 'ltx-2', name: 'LTX-2.3', description: 'Fast text-to-video with upscaler' },
+    { id: 'grok-video-pro', name: 'Grok Video Pro', description: 'xAI official video generation' },
+  ], []);
+
+  // Text models from Pollinations
+  const textModels = useMemo(() => [
+    { id: 'openai', name: 'GPT-5.4 Nano', description: 'Fast & Balanced with tools' },
+    { id: 'openai-fast', name: 'GPT-5 Nano', description: 'Ultra Fast & Affordable' },
+    { id: 'openai-large', name: 'GPT-5.4', description: 'Most Powerful & Intelligent' },
+    { id: 'claude', name: 'Claude Sonnet 4.6', description: 'Most Capable & Balanced' },
+    { id: 'claude-fast', name: 'Claude Haiku 4.5', description: 'Fast & Intelligent' },
+    { id: 'gemini', name: 'Gemini 3 Flash', description: 'Pro-Grade Reasoning at Flash Speed' },
+    { id: 'qwen-coder', name: 'Qwen3 Coder 30B', description: 'Specialized for Code Generation' },
+    { id: 'mistral', name: 'Mistral Small 3.2', description: 'Efficient & Cost-Effective' },
   ], []);
 
   // TTS voices available
@@ -123,10 +171,59 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     localStorage.setItem('ai-maos-tts-voice', selectedTTSVoice);
   }, [selectedTTSModel, selectedTTSVoice]);
 
+  // Persist video model selection
+  useMemo(() => {
+    localStorage.setItem('ai-maos-video-model', selectedVideoModel);
+  }, [selectedVideoModel]);
+
+  // Persist text model selection
+  useMemo(() => {
+    localStorage.setItem('ai-maos-text-model', selectedTextModel);
+  }, [selectedTextModel]);
+
   const selectedProvider = useMemo(
     () => settings.providerTemplates.find((template) => template.id === settings.selectedProviderId),
     [settings.providerTemplates, settings.selectedProviderId]
   );
+
+  // Determine current source based on connection type and settings
+  const currentSource = useMemo((): GenerationSource => {
+    if (settings.connectionType === 'local') {
+      return 'local';
+    }
+    if (settings.selectedProviderId === 'pollinations') {
+      return 'cloud';
+    }
+    return 'openai-compatible';
+  }, [settings.connectionType, settings.selectedProviderId]);
+
+  // Check if local models are available and validated
+  const hasValidatedLocalModels = useMemo(() => {
+    return settings.localModels.some((m) => m.testStatus === 'passed');
+  }, [settings.localModels]);
+
+  // Get allowed sources for current modality
+  const allowedSources = useMemo(() => {
+    return getAllowedSourcesForModality(activeModality);
+  }, [activeModality]);
+
+  // Check if current source is allowed for the active modality
+  const isCurrentSourceAllowed = useMemo(() => {
+    return isSourceAllowedForModality(activeModality, currentSource);
+  }, [activeModality, currentSource]);
+
+  // Get disallowed reason if current source is not allowed
+  const disallowedReason = useMemo(() => {
+    if (isCurrentSourceAllowed) return null;
+
+    if (activeModality === 'image' && currentSource === 'local') {
+      return 'Image generation does not support local uploaded models. Please use Cloud or OpenAI-compatible API.';
+    }
+    if (activeModality === 'video' && currentSource !== 'cloud') {
+      return 'Video generation only supports Pollinations AI Cloud. Local models and custom APIs are not supported.';
+    }
+    return `Source "${getSourceDisplayName(currentSource)}" is not available for ${activeModality} generation.`;
+  }, [activeModality, currentSource, isCurrentSourceAllowed]);
 
   const updateSettings = (updates: Partial<Settings>) => {
     onUpdateSettings({ ...settings, ...updates });
@@ -158,7 +255,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
     // Check OPFS support for large file storage
     if (isOPFSSupported()) {
-      console.log('[Upload] Using OPFS for streaming storage');
+      // Upload uses OPFS
     }
 
     for (const file of files) {
@@ -436,13 +533,59 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
       selectedModelId: settings.selectedModelId === modelId
         ? selectedTemplate?.models?.[0]?.id || ''
         : settings.selectedModelId,
-      customModelId: settings.customModelId === modelId
+      customModelId: settings.selectedModelId === modelId
         ? selectedTemplate?.models?.[0]?.id || ''
         : settings.customModelId,
     });
   };
 
   const localPassedModels = settings.localModels.filter((model) => model.testStatus === 'passed');
+
+  // Get model options for current modality
+  const getModelOptions = (modality: ModalityTab) => {
+    switch (modality) {
+      case 'image':
+        return imageModels;
+      case 'tts':
+        return ttsModels;
+      case 'video':
+        return videoModels;
+      case 'text':
+      default:
+        return textModels;
+    }
+  };
+
+  const getSelectedModel = (modality: ModalityTab) => {
+    switch (modality) {
+      case 'image':
+        return selectedImageModel;
+      case 'tts':
+        return selectedTTSModel;
+      case 'video':
+        return selectedVideoModel;
+      case 'text':
+      default:
+        return selectedTextModel;
+    }
+  };
+
+  const setSelectedModel = (modality: ModalityTab, modelId: string) => {
+    switch (modality) {
+      case 'image':
+        setSelectedImageModel(modelId);
+        break;
+      case 'tts':
+        setSelectedTTSModel(modelId);
+        break;
+      case 'video':
+        setSelectedVideoModel(modelId);
+        break;
+      case 'text':
+        setSelectedTextModel(modelId);
+        break;
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -768,6 +911,28 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                 </div>
               </div>
 
+              {/* Routing Matrix Info Banner */}
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+                <div className="flex items-center gap-2 text-[12px] font-medium text-violet-100">
+                  <Zap className="h-3.5 w-3.5 text-violet-400" />
+                  Generation Routing Matrix
+                </div>
+                <div className="mt-2 space-y-2">
+                  <div className="text-[11px] text-zinc-400">
+                    <span className="text-cyan-300">Text:</span> Local, Cloud, OpenAI-compatible
+                  </div>
+                  <div className="text-[11px] text-zinc-400">
+                    <span className="text-cyan-300">Image:</span> Cloud, OpenAI-compatible <span className="text-red-400">(no local)</span>
+                  </div>
+                  <div className="text-[11px] text-zinc-400">
+                    <span className="text-cyan-300">TTS:</span> Local, Cloud, OpenAI-compatible
+                  </div>
+                  <div className="text-[11px] text-zinc-400">
+                    <span className="text-cyan-300">Video:</span> Pollinations AI Cloud only <span className="text-red-400">(no local, no custom API)</span>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
                 <div className="flex items-center gap-2 text-[12px] font-medium text-violet-100">
                   <Zap className="h-3.5 w-3.5 text-violet-400" />
@@ -805,6 +970,9 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                   </div>
                   <div className="mt-1 text-[11px] text-cyan-200/80">
                     Upload and validate GGUF or Safetensors in the Upload tab, then assign per agent from the Agent panel.
+                  </div>
+                  <div className="mt-2 text-[11px] text-amber-200/80">
+                    Note: Local models work for Text and TTS only. Image generation will use Cloud.
                   </div>
                 </div>
               )}
@@ -852,6 +1020,9 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                         <div className="mt-1 text-[11px] text-zinc-500">
                           {(model.size / 1024 / 1024).toFixed(2)} MB • {new Date(model.uploadedAt).toLocaleString()}
                         </div>
+                        <div className="mt-1 text-[10px] text-amber-400">
+                          Usable for: Text generation, TTS
+                        </div>
                         <div className="mt-2">
                           {model.testStatus === 'testing' && (
                             <div className="flex items-center gap-2 text-[11px] text-amber-300">
@@ -889,6 +1060,69 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
           {activeTab === 'upload' && (
             <div className="space-y-4">
+              {/* Routing Matrix Modality Tabs */}
+              <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                  <Zap className="h-4 w-4 text-violet-400" />
+                  Generation Routing - Select Modality
+                </div>
+                <div className="flex gap-2">
+                  {(['text', 'image', 'tts', 'video'] as ModalityTab[]).map((modality) => {
+                    const allowed = allowedSources;
+                    const isAllowed = isSourceAllowedForModality(modality, currentSource);
+                    return (
+                      <button
+                        key={modality}
+                        onClick={() => setActiveModality(modality)}
+                        className={cn(
+                          'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition',
+                          activeModality === modality
+                            ? 'border-violet-500/30 bg-violet-500/10 text-violet-200'
+                            : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10',
+                          !isAllowed && 'opacity-60'
+                        )}
+                      >
+                        {modality === 'text' && <Server className="h-3 w-3" />}
+                        {modality === 'image' && <ImageIcon className="h-3 w-3" />}
+                        {modality === 'tts' && <Mic className="h-3 w-3" />}
+                        {modality === 'video' && <Video className="h-3 w-3" />}
+                        {modality.charAt(0).toUpperCase() + modality.slice(1)}
+                        {!isAllowed && <Lock className="h-3 w-3 text-red-400" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Current Source Status */}
+                <div className="mt-3 flex items-center gap-2 text-[11px]">
+                  <span className="text-zinc-400">Current source:</span>
+                  <span className={cn(
+                    'font-medium',
+                    isCurrentSourceAllowed ? 'text-cyan-300' : 'text-red-300'
+                  )}>
+                    {getSourceDisplayName(currentSource)}
+                  </span>
+                  {isCurrentSourceAllowed ? (
+                    <Check className="h-3 w-3 text-cyan-400" />
+                  ) : (
+                    <Lock className="h-3 w-3 text-red-400" />
+                  )}
+                </div>
+
+                {/* Disallowed Warning */}
+                {!isCurrentSourceAllowed && disallowedReason && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-2">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
+                    <div className="text-[11px] text-red-200">{disallowedReason}</div>
+                  </div>
+                )}
+
+                {/* Allowed Sources Info */}
+                <div className="mt-3 text-[10px] text-zinc-500">
+                  Allowed sources: {allowedSources.map(s => getSourceDisplayName(s)).join(', ')}
+                </div>
+              </div>
+
               {/* Capability Warnings */}
               {capabilityWarnings.length > 0 && (
                 <div className="space-y-2">
@@ -989,67 +1223,162 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                 </div>
               ))}
 
-              {/* Image Model Selection */}
-              <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
-                  <ImageIcon className="h-4 w-4 text-violet-400" />
-                  Image Generation Model
+              {/* Model Selection by Modality */}
+              {activeModality === 'image' && (
+                <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                  <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                    <ImageIcon className="h-4 w-4 text-violet-400" />
+                    Image Generation Model
+                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                      Cloud / OpenAI-compatible
+                    </span>
+                  </div>
+                  <div className="mb-3 text-[10px] text-zinc-500">
+                    Local models are not supported for image generation
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {imageModels.map(model => (
+                      <button
+                        key={model.id}
+                        onClick={() => setSelectedImageModel(model.id)}
+                        className={cn(
+                          'relative rounded-lg border p-3 text-left transition',
+                          selectedImageModel === model.id
+                            ? 'border-violet-500/30 bg-violet-500/10'
+                            : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
+                        )}
+                      >
+                        <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                        <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
+                        {selectedImageModel === model.id && (
+                          <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {imageModels.map(model => (
-                    <button
-                      key={model.id}
-                      onClick={() => setSelectedImageModel(model.id)}
-                      className={cn(
-                        'rounded-lg border p-3 text-left transition',
-                        selectedImageModel === model.id
-                          ? 'border-violet-500/30 bg-violet-500/10'
-                          : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
-                      )}
-                    >
-                      <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
-                      <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
-                      {selectedImageModel === model.id && (
-                        <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              )}
 
-              {/* TTS Model and Voice Selection */}
-              <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
-                  <Mic className="h-4 w-4 text-violet-400" />
-                  Text-to-Speech Settings
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <label className="mb-1.5 block text-[11px] text-zinc-400">TTS Model</label>
-                    <select
-                      value={selectedTTSModel}
-                      onChange={(e) => setSelectedTTSModel(e.target.value)}
-                      className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
-                    >
-                      {ttsModels.map(model => (
-                        <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
-                      ))}
-                    </select>
+              {activeModality === 'tts' && (
+                <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                    <Mic className="h-4 w-4 text-violet-400" />
+                    Text-to-Speech Settings
+                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                      Local / Cloud / OpenAI-compatible
+                    </span>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-[11px] text-zinc-400">Voice</label>
-                    <select
-                      value={selectedTTSVoice}
-                      onChange={(e) => setSelectedTTSVoice(e.target.value)}
-                      className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
-                    >
-                      {ttsVoices.map(voice => (
-                        <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>
-                      ))}
-                    </select>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-1.5 block text-[11px] text-zinc-400">TTS Model</label>
+                      <select
+                        value={selectedTTSModel}
+                        onChange={(e) => setSelectedTTSModel(e.target.value)}
+                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                      >
+                        {ttsModels.map(model => (
+                          <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] text-zinc-400">Voice</label>
+                      <select
+                        value={selectedTTSVoice}
+                        onChange={(e) => setSelectedTTSVoice(e.target.value)}
+                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                      >
+                        {ttsVoices.map(voice => (
+                          <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {activeModality === 'video' && (
+                <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                  <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                    <Video className="h-4 w-4 text-violet-400" />
+                    Video Generation Model
+                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                      Pollinations AI Cloud Only
+                    </span>
+                  </div>
+                  <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
+                    <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                    <div className="text-[10px] text-amber-200">
+                      Video generation is only available through Pollinations AI Cloud. Local models and custom OpenAI-compatible video endpoints are not supported.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {videoModels.map(model => (
+                      <button
+                        key={model.id}
+                        onClick={() => setSelectedVideoModel(model.id)}
+                        className={cn(
+                          'relative rounded-lg border p-3 text-left transition',
+                          selectedVideoModel === model.id
+                            ? 'border-violet-500/30 bg-violet-500/10'
+                            : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
+                        )}
+                      >
+                        <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                        <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
+                        {selectedVideoModel === model.id && (
+                          <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {activeModality === 'text' && (
+                <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                  <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                    <Server className="h-4 w-4 text-violet-400" />
+                    Text Generation Model
+                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                      Local / Cloud / OpenAI-compatible
+                    </span>
+                  </div>
+                  <div className="mb-3 text-[10px] text-zinc-500">
+                    Text generation supports local models, cloud, and OpenAI-compatible APIs
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {textModels.map(model => (
+                      <button
+                        key={model.id}
+                        onClick={() => setSelectedTextModel(model.id)}
+                        className={cn(
+                          'relative rounded-lg border p-3 text-left transition',
+                          selectedTextModel === model.id
+                            ? 'border-violet-500/30 bg-violet-500/10'
+                            : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
+                        )}
+                      >
+                        <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                        <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
+                        {selectedTextModel === model.id && (
+                          <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {hasValidatedLocalModels && (
+                    <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2">
+                      <div className="text-[11px] text-cyan-200">
+                        Local models available: {localPassedModels.map(m => m.name).join(', ')}
+                      </div>
+                      <div className="mt-1 text-[10px] text-zinc-400">
+                        Switch to Local connection type to use uploaded models
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex items-start gap-3 rounded-xl border border-white/5 bg-zinc-900/40 px-4 py-3">
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />

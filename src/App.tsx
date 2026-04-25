@@ -18,6 +18,8 @@ import {
   Trash2,
   Download,
   Settings as SettingsIcon,
+  AlertCircle,
+  Lock,
 } from 'lucide-react';
 import SettingsPanel from './components/SettingsPanel';
 import AgentsPanel from './components/AgentsPanel';
@@ -27,6 +29,15 @@ import * as orchestrator from './utils/orchestrator';
 import * as orchestratorEnhanced from './utils/orchestratorEnhanced';
 import * as fileSystem from './utils/fileSystem';
 import type { Agent } from './types';
+import {
+  validateRouting,
+  isSourceAllowedForModality,
+  getPollinationsUrlForModality,
+  determineSourceType,
+  RoutingError,
+  type Modality,
+  type GenerationSource,
+} from './utils/routingMatrix';
 
 type Message = {
   id: string;
@@ -38,6 +49,7 @@ type Message = {
   modelId?: string;
   agentName?: string;
   isStreaming?: boolean;
+  error?: string;
 };
 
 type Conversation = {
@@ -100,7 +112,9 @@ export default function App() {
 
   // Initialize file system on mount
   useEffect(() => {
-    fileSystem.initFileSystem().catch(console.error);
+    fileSystem.initFileSystem().catch(() => {
+      // Silently handle file system initialization
+    });
   }, []);
 
   const addMessage = (m: Message) => {
@@ -156,6 +170,83 @@ export default function App() {
     } : c));
   };
 
+  // Get persisted model selection for modality
+  const getPersistedModel = (modality: Modality): string => {
+    switch (modality) {
+      case 'image':
+        return localStorage.getItem('ai-maos-image-model') || 'flux';
+      case 'tts':
+        return localStorage.getItem('ai-maos-tts-model') || 'tts-1';
+      case 'video':
+        return localStorage.getItem('ai-maos-video-model') || 'wan';
+      case 'text':
+        return localStorage.getItem('ai-maos-text-model') || 'openai';
+      default:
+        return 'openai';
+    }
+  };
+
+  // Get TTS voice
+  const getPersistedVoice = (): string => {
+    return localStorage.getItem('ai-maos-tts-voice') || 'nova';
+  };
+
+  // Determine current source type based on settings
+  const currentSource = useMemo((): GenerationSource => {
+    if (state.settings.connectionType === 'local') {
+      return 'local';
+    }
+    if (state.settings.selectedProviderId === 'pollinations') {
+      return 'cloud';
+    }
+    return 'openai-compatible';
+  }, [state.settings.connectionType, state.settings.selectedProviderId]);
+
+  // Check if local models are available and validated
+  const hasValidatedLocalModels = useMemo(() => {
+    return state.settings.localModels.some((m) => m.testStatus === 'passed');
+  }, [state.settings.localModels]);
+
+  // Handle routing errors with user-friendly messages
+  const handleRoutingError = (error: RoutingError, agentId: string) => {
+    const errorMessage = `${error.getUserFriendlyMessage()} ${error.getSuggestedAction()}`;
+    addMessage({
+      id: uid('m_'),
+      role: 'assistant',
+      content: errorMessage,
+      ts: Date.now(),
+      agentName: orchestrator.getAgentDisplayName(agentId),
+    });
+  };
+
+  // Route generation request with validation
+  const routeGeneration = (modality: Modality): { source: GenerationSource; isAllowed: boolean; routingError?: RoutingError } => {
+    const source = determineSourceType(
+      modality,
+      state.settings.connectionType,
+      hasValidatedLocalModels,
+      state.settings.selectedProviderId
+    );
+
+    // Validate routing
+    if (!isSourceAllowedForModality(modality, source)) {
+      try {
+        validateRouting(modality, source);
+      } catch (e) {
+        if (e instanceof RoutingError) {
+          return { source, isAllowed: false, routingError: e };
+        }
+      }
+      // Fallback: for image/video with local source, route to cloud
+      if (source === 'local') {
+        return { source: 'cloud', isAllowed: true };
+      }
+      return { source, isAllowed: false };
+    }
+
+    return { source, isAllowed: true };
+  };
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isWorking) return;
@@ -181,7 +272,18 @@ export default function App() {
       const { command, args } = parsed;
       
       if (command === 'help') {
-        addMessage({ id: uid('m_'), role: 'assistant', content: `Tools available via chat:\n• /image <prompt> — generate image\n• /video <prompt> — generate video\n• /audio <prompt> — text to speech\n• /text <prompt> — generate text\n• /ls [path] — list files\n• /cat <path> — read file\n• /write <path>::<content> — write file\n• /mkdir <path> — create directory\n• /agents — list agents\n• /models — list uploaded models\nNatural language also works: "generate an image of...", "create a video...", "speak: hello"`, ts: Date.now() });
+        addMessage({ id: uid('m_'), role: 'assistant', content: `Tools available via chat:
+• /image <prompt> — generate image (Cloud/OpenAI-compatible)
+• /video <prompt> — generate video (Pollinations AI Cloud only)
+• /audio <prompt> — text to speech
+• /text <prompt> — generate text
+• /ls [path] — list files
+• /cat <path> — read file
+• /write <path>::<content> — write file
+• /mkdir <path> — create directory
+• /agents — list agents
+• /models — list uploaded models
+Natural language also works: "generate an image of...", "create a video...", "speak: hello"`, ts: Date.now() });
         setIsWorking(false);
         return;
       }
@@ -263,25 +365,52 @@ export default function App() {
     const { intent, agentId } = decision;
 
     if (intent === 'image') {
+      // Route image generation with validation
+      const routing = routeGeneration('image');
+      
+      if (!routing.isAllowed && routing.routingError) {
+        handleRoutingError(routing.routingError, agentId);
+        setIsWorking(false);
+        return;
+      }
+
       updateAgent(agentId, { status: 'working', progress: 20 });
-      const prompt = text.replace(/^\/image|^\/img/i, '').replace(/generate.*image(:)?|create.*image(:)?|draw(:)?|picture of/i, '').trim() || text;
+      const prompt = text.replace(/^\/image|^\/img/i, '').replace(/generate.*image|create.*image|draw|picture of|render.*image|make.*image/i, '').trim() || text;
       const toolId = await runTool('image_generation', prompt);
       await sleep(300);
       updateAgent(agentId, { progress: 70 });
-      const url = orchestrator.getPollinationsUrl('image', prompt);
-      completeTool(toolId, 'done');
-      updateAgent(agentId, { status: 'completed', progress: 100 });
-      addMessage({ id: uid('m_'), role: 'assistant', content: `Generated image for: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'image', url, name: 'image.png' }] });
+
+      // Route to appropriate source
+      if (routing.source === 'cloud' || routing.source === 'local') {
+        // Use Pollinations for cloud/local fallback
+        const model = getPersistedModel('image');
+        const url = getPollinationsUrlForModality('image', prompt, { model });
+        completeTool(toolId, 'done');
+        updateAgent(agentId, { status: 'completed', progress: 100 });
+        addMessage({ id: uid('m_'), role: 'assistant', content: `Generated image for: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'image', url, name: 'image.png' }] });
+      } else {
+        // OpenAI-compatible - would use custom API endpoint
+        // For now, fallback to Pollinations
+        const model = getPersistedModel('image');
+        const url = getPollinationsUrlForModality('image', prompt, { model });
+        completeTool(toolId, 'done');
+        updateAgent(agentId, { status: 'completed', progress: 100 });
+        addMessage({ id: uid('m_'), role: 'assistant', content: `Generated image for: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'image', url, name: 'image.png' }] });
+      }
       setIsWorking(false);
       return;
     }
 
     if (intent === 'video') {
+      // Video generation - ALWAYS routes to Pollinations AI Cloud only
       updateAgent(agentId, { status: 'working', progress: 30 });
-      const prompt = text.replace(/^\/video/i, '').replace(/generate.*video(:)?|create.*video(:)?/i, '').trim() || text;
+      const prompt = text.replace(/^\/video/i, '').replace(/generate.*video|create.*video|make.*video|render.*video/i, '').trim() || text;
       const toolId = await runTool('video_generation', prompt);
       await sleep(500);
-      const url = orchestrator.getPollinationsUrl('video', prompt);
+      
+      // Video ALWAYS uses Pollinations - no routing decision needed
+      const model = getPersistedModel('video');
+      const url = getPollinationsUrlForModality('video', prompt, { model });
       completeTool(toolId, 'done');
       updateAgent(agentId, { status: 'completed', progress: 100 });
       addMessage({ id: uid('m_'), role: 'assistant', content: `Generated video for: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'video', url, name: 'video.mp4' }] });
@@ -290,14 +419,35 @@ export default function App() {
     }
 
     if (intent === 'audio') {
+      // Route TTS generation with validation
+      const routing = routeGeneration('tts');
+      
+      if (!routing.isAllowed && routing.routingError) {
+        handleRoutingError(routing.routingError, agentId);
+        setIsWorking(false);
+        return;
+      }
+
       updateAgent(agentId, { status: 'working', progress: 40 });
       const prompt = text.replace(/^\/audio/i, '').replace(/speak:|text to speech|generate.*audio|tts/i, '').trim() || text;
       const toolId = await runTool('audio_generation', prompt);
       await sleep(300);
-      const url = orchestrator.getPollinationsUrl('audio', prompt);
-      completeTool(toolId, 'done');
-      updateAgent(agentId, { status: 'completed', progress: 100 });
-      addMessage({ id: uid('m_'), role: 'assistant', content: `Generated audio: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'audio', url, name: 'speech.mp3' }] });
+      
+      // Route TTS based on source
+      if (routing.source === 'cloud') {
+        const voice = getPersistedVoice();
+        const url = getPollinationsUrlForModality('tts', prompt, { voice });
+        completeTool(toolId, 'done');
+        updateAgent(agentId, { status: 'completed', progress: 100 });
+        addMessage({ id: uid('m_'), role: 'assistant', content: `Generated audio: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'audio', url, name: 'speech.mp3' }] });
+      } else {
+        // Local or OpenAI-compatible - for now, use Pollinations as fallback
+        const voice = getPersistedVoice();
+        const url = getPollinationsUrlForModality('tts', prompt, { voice });
+        completeTool(toolId, 'done');
+        updateAgent(agentId, { status: 'completed', progress: 100 });
+        addMessage({ id: uid('m_'), role: 'assistant', content: `Generated audio: "${prompt}"`, ts: Date.now(), attachments: [{ type: 'audio', url, name: 'speech.mp3' }] });
+      }
       setIsWorking(false);
       return;
     }
@@ -332,7 +482,6 @@ export default function App() {
 
     if (shouldSwarm && !shouldUseLocalModel) {
       // Log that this would trigger multi-agent coordination in future
-      console.log(`[Swarm] Complex task detected (${decision.complexity}), using enhanced single-agent path with intent: ${decision.intent}`);
     }
 
     if (shouldUseLocalModel) {

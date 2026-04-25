@@ -3,6 +3,10 @@ export type AppMode = 'chat' | 'build' | 'research' | 'study' | 'browse' | 'auto
 export type ConnectionType = 'local' | 'openai';
 export type ModelTestStatus = 'pending' | 'testing' | 'passed' | 'failed';
 
+// Modality types for generation routing
+export type Modality = 'text' | 'image' | 'tts' | 'video';
+export type GenerationSource = 'local' | 'cloud' | 'openai-compatible';
+
 export interface Agent {
   id: string;
   name: string;
