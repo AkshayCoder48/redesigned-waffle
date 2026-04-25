@@ -1191,7 +1191,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                   <Upload className="h-6 w-6 text-violet-400" />
                 </div>
                 <div className="mt-3 text-[13px] font-medium text-zinc-200">Upload Model Files</div>
-                <div className="mt-1 text-[11px] text-zinc-500">GGUF for LLM/TTS, Safetensors for T2I • OPFS streaming supported</div>
+                <div className="mt-1 text-[11px] text-zinc-500">GGUF/Safetensors for Text/TTS models • OPFS streaming supported</div>
                 <label className="mt-4 cursor-pointer">
                   <input
                     type="file"
@@ -1253,63 +1253,67 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
               {/* Model Selection by Modality */}
               {activeModality === 'image' && (
                 <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                  <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                  <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
                     <ImageIcon className="h-4 w-4 text-violet-400" />
-                    Image Generation Model
+                    Image Model Selection
                     <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
                       Cloud / OpenAI-compatible
                     </span>
                   </div>
-                  <div className="mb-3 text-[10px] text-zinc-500">
-                    Local models are not supported for image generation
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {imageModels.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => setSelectedImageModel(model.id)}
-                        className={cn(
-                          'relative rounded-lg border p-3 text-left transition',
-                          selectedImageModel === model.id
-                            ? 'border-violet-500/30 bg-violet-500/10'
-                            : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
-                        )}
-                      >
-                        <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
-                        <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
-                        {selectedImageModel === model.id && (
-                          <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
-                        )}
-                      </button>
-                    ))}
+                  {/* Select Control for Image Models */}
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
+                      <Globe className="h-3 w-3" />
+                      Select Image Model
+                    </label>
+                    <select
+                      value={selectedImageModel}
+                      onChange={(e) => setSelectedImageModel(e.target.value)}
+                      className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                    >
+                      {imageModels.map(model => (
+                        <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
 
               {activeModality === 'tts' && (
                 <div className="space-y-4">
-                  {/* Cloud TTS Models */}
+                  {/* TTS Model Selection with Select Control */}
                   <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
                     <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
                       <Mic className="h-4 w-4 text-violet-400" />
-                      Text-to-Speech Model
-                      <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
-                        Cloud / OpenAI-compatible
-                      </span>
+                      TTS Model Selection
                     </div>
                     <div className="space-y-3">
+                      {/* Select Control for TTS Models */}
                       <div>
-                        <label className="mb-1.5 block text-[11px] text-zinc-400">TTS Model</label>
+                        <label className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
+                          <Globe className="h-3 w-3" />
+                          Select TTS Model
+                        </label>
                         <select
                           value={selectedTTSModel}
                           onChange={(e) => setSelectedTTSModel(e.target.value)}
                           className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
                         >
-                          {ttsModels.map(model => (
-                            <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
-                          ))}
+                          <optgroup label="Cloud / OpenAI-compatible">
+                            {ttsModels.map(model => (
+                              <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                            ))}
+                          </optgroup>
+                          {localPassedModels.length > 0 && (
+                            <optgroup label="Local Models">
+                              {localPassedModels.map(model => (
+                                <option key={model.id} value={`local:${model.id}`}>{model.name} (Local)</option>
+                              ))}
+                            </optgroup>
+                          )}
                         </select>
                       </div>
+                      {/* Voice Selection */}
                       <div>
                         <label className="mb-1.5 block text-[11px] text-zinc-400">Voice</label>
                         <select
@@ -1324,48 +1328,14 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       </div>
                     </div>
                   </div>
-
-                  {/* Local TTS Models */}
-                  {localPassedModels.length > 0 && (
-                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-                      <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-cyan-200">
-                        <Cpu className="h-4 w-4" />
-                        Local TTS Models
-                      </div>
-                      <div className="space-y-2">
-                        {localPassedModels.map(model => (
-                          <button
-                            key={model.id}
-                            onClick={() => setSelectedTTSLocalModel(model.id)}
-                            className={cn(
-                              'flex w-full items-center justify-between rounded-lg border p-3 text-left transition',
-                              selectedTTSLocalModel === model.id
-                                ? 'border-cyan-500/30 bg-cyan-500/10'
-                                : 'border-white/10 bg-zinc-900/30 hover:bg-zinc-900/50'
-                            )}
-                          >
-                            <div>
-                              <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
-                              <div className="text-[10px] text-zinc-500">
-                                {(model.size / 1024 / 1024).toFixed(1)} MB • {model.format}
-                              </div>
-                            </div>
-                            {selectedTTSLocalModel === model.id && (
-                              <Check className="h-4 w-4 text-cyan-400" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
               {activeModality === 'video' && (
                 <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                  <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                  <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
                     <Video className="h-4 w-4 text-violet-400" />
-                    Video Generation Model
+                    Video Model Selection
                     <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
                       Pollinations AI Cloud Only
                     </span>
@@ -1376,83 +1346,78 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                       Video generation is only available through Pollinations AI Cloud. Local models and custom OpenAI-compatible video endpoints are not supported.
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {videoModels.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => setSelectedVideoModel(model.id)}
-                        className={cn(
-                          'relative rounded-lg border p-3 text-left transition',
-                          selectedVideoModel === model.id
-                            ? 'border-violet-500/30 bg-violet-500/10'
-                            : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
-                        )}
-                      >
-                        <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
-                        <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
-                        {selectedVideoModel === model.id && (
-                          <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
-                        )}
-                      </button>
-                    ))}
+                  {/* Select Control for Video Models */}
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
+                      <Globe className="h-3 w-3" />
+                      Select Video Model
+                    </label>
+                    <select
+                      value={selectedVideoModel}
+                      onChange={(e) => setSelectedVideoModel(e.target.value)}
+                      className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                    >
+                      {videoModels.map(model => (
+                        <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
 
               {activeModality === 'text' && (
                 <div className="space-y-4">
-                  {/* Cloud Text Models */}
+                  {/* Text Model Selection with Select Control */}
                   <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                    <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                    <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
                       <Server className="h-4 w-4 text-violet-400" />
-                      Text Generation Model
-                      <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
-                        Cloud / OpenAI-compatible
-                      </span>
+                      Text Model Selection
                     </div>
-                    <div className="mb-3 text-[10px] text-zinc-500">
-                      Select a cloud or API model for text generation
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {textModels.map(model => (
-                        <button
-                          key={model.id}
-                          onClick={() => setSelectedTextModel(model.id)}
-                          className={cn(
-                            'relative rounded-lg border p-3 text-left transition',
-                            selectedTextModel === model.id
-                              ? 'border-violet-500/30 bg-violet-500/10'
-                              : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
-                          )}
-                        >
-                          <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
-                          <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
-                          {selectedTextModel === model.id && (
-                            <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
-                          )}
-                        </button>
-                      ))}
+                    {/* Select Control for Text Models */}
+                    <div>
+                      <label className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
+                        <Globe className="h-3 w-3" />
+                        Select Text Model
+                      </label>
+                      <select
+                        value={selectedTextModel}
+                        onChange={(e) => setSelectedTextModel(e.target.value)}
+                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                      >
+                        <optgroup label="Cloud / OpenAI-compatible">
+                          {textModels.map(model => (
+                            <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                          ))}
+                        </optgroup>
+                        {localPassedModels.length > 0 && (
+                          <optgroup label="Local Models">
+                            {localPassedModels.map(model => (
+                              <option key={model.id} value={`local:${model.id}`}>{model.name} (Local)</option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
                     </div>
                   </div>
 
-                  {/* Local Text Models */}
+                  {/* Local Text Models Upload Area */}
                   {localPassedModels.length > 0 && (
                     <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                       <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-cyan-200">
                         <Cpu className="h-4 w-4" />
                         Local Text Models
+                        <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                          {localPassedModels.length} available
+                        </span>
+                      </div>
+                      <div className="mb-2 text-[11px] text-zinc-400">
+                        Uploaded models for text generation. Select above to use.
                       </div>
                       <div className="space-y-2">
                         {localPassedModels.map(model => (
-                          <button
+                          <div
                             key={model.id}
-                            onClick={() => setSelectedTextLocalModel(model.id)}
-                            className={cn(
-                              'flex w-full items-center justify-between rounded-lg border p-3 text-left transition',
-                              selectedTextLocalModel === model.id
-                                ? 'border-cyan-500/30 bg-cyan-500/10'
-                                : 'border-white/10 bg-zinc-900/30 hover:bg-zinc-900/50'
-                            )}
+                            className="flex items-center justify-between rounded-lg border border-white/10 bg-zinc-900/30 p-3"
                           >
                             <div>
                               <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
@@ -1463,11 +1428,8 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                             {selectedTextLocalModel === model.id && (
                               <Check className="h-4 w-4 text-cyan-400" />
                             )}
-                          </button>
+                          </div>
                         ))}
-                      </div>
-                      <div className="mt-2 text-[10px] text-zinc-400">
-                        Switch to Local connection type to use uploaded models
                       </div>
                     </div>
                   )}
