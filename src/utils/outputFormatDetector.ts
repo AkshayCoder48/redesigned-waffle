@@ -307,9 +307,14 @@ export function segmentContent(
     greedy?: boolean;
   }
 ): FormatSegment[] {
-  const { minConfidence = 0.6, greedy = false } = options ?? {};
+  const { minConfidence = 0.6, greedy = true } = options ?? {};
   const segments: FormatSegment[] = [];
-  
+
+  // Handle empty or whitespace-only input
+  if (!text || !text.trim()) {
+    return [];
+  }
+
   // Simple segmentation: split by double newlines and detect format for each section
   const sections = text.split(/\n\n+/);
   let currentIndex = 0;
@@ -322,26 +327,38 @@ export function segmentContent(
     }
 
     const detection = detectPrimaryFormat(trimmed);
-    
+
     if (detection.confidence >= minConfidence) {
       segments.push({
         format: detection.format,
         content: trimmed,
         confidence: detection.confidence,
         startIndex: currentIndex,
-        endIndex: currentIndex + section.length,
+        endIndex: currentIndex + trimmed.length,
       });
     } else if (greedy) {
+      // Force include all content - mark as unstructured if no pattern matched
       segments.push({
         format: 'unstructured',
         content: trimmed,
-        confidence: 1 - detection.confidence,
+        confidence: detection.confidence,
         startIndex: currentIndex,
-        endIndex: currentIndex + section.length,
+        endIndex: currentIndex + trimmed.length,
       });
     }
 
-    currentIndex += section.length;
+    currentIndex += section.length + 2; // Account for double newline separator
+  }
+
+  // If no segments created, treat entire text as unstructured
+  if (segments.length === 0) {
+    segments.push({
+      format: 'unstructured',
+      content: text.trim(),
+      confidence: 1.0,
+      startIndex: 0,
+      endIndex: text.length,
+    });
   }
 
   return segments;

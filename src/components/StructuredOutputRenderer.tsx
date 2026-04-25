@@ -334,14 +334,49 @@ export function ConceptBreakdown({ content }: FormatComponentProps) {
 // ============ Q&A Panel ============
 export function QAPanel({ content }: FormatComponentProps) {
   const pairs = useMemo(() => {
-    const parts = content.split(/\n\n+/).filter(p => p.trim());
-    return parts.map(part => {
-      const lines = part.split('\n');
-      const questionLine = lines.find(l => l.match(/\?$/)) || lines[0];
-      const question = questionLine?.replace(/^[#*\s]*/, '') || '';
-      const answer = lines.slice(lines.indexOf(questionLine) + 1).join('\n').trim();
-      return { question, answer };
-    }).filter(p => p.question);
+    // Split by any newline sequence (single or double) to capture all content
+    const lines = content.split(/\n+/).filter(l => l.trim());
+    const result: { question: string; answer: string }[] = [];
+    let currentQuestion = '';
+    let currentAnswer: string[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Detect question lines (ending with ? or containing Q: prefix)
+      const isQuestion = /\?$/.test(trimmed) || /^Q[:\.\s]|^Question[:\.\s]/i.test(trimmed);
+      const cleanQuestion = trimmed.replace(/^[#*\s]*(?:Q[:\.\s]|Question[:\.\s]\s*)/i, '').replace(/\?$/, '').trim();
+
+      if (isQuestion && cleanQuestion) {
+        // Save previous Q&A pair if exists
+        if (currentQuestion) {
+          result.push({
+            question: currentQuestion,
+            answer: currentAnswer.join('\n').trim() || '(no answer provided)',
+          });
+        }
+        currentQuestion = cleanQuestion;
+        currentAnswer = [];
+      } else if (currentQuestion) {
+        // This is answer content
+        currentAnswer.push(trimmed);
+      } else {
+        // No question yet, treat as initial answer or preamble
+        currentQuestion = trimmed.replace(/\?$/, '').trim() || 'Question';
+        currentAnswer = [];
+      }
+    }
+
+    // Don't forget the last pair
+    if (currentQuestion) {
+      result.push({
+        question: currentQuestion,
+        answer: currentAnswer.join('\n').trim() || '(no answer provided)',
+      });
+    }
+
+    return result;
   }, [content]);
 
   return (
@@ -351,7 +386,7 @@ export function QAPanel({ content }: FormatComponentProps) {
           <div className="bg-violet-500/5 px-4 py-3">
             <div className="flex items-start gap-2">
               <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
-              <span className="text-[14px] font-medium text-violet-200">{pair.question}</span>
+              <span className="text-[14px] font-medium text-violet-200">{pair.question}?</span>
             </div>
           </div>
           <div className="p-4 text-[14px] leading-relaxed text-zinc-300">
@@ -923,7 +958,122 @@ export function DecisionMatrix({ content }: FormatComponentProps) {
 
 // ============ Fallback: Plain Text Renderer ============
 function PlainText({ content }: FormatComponentProps) {
-  return <div className="whitespace-pre-wrap">{content}</div>;
+  // Handle markdown-style content that doesn't fit other formats
+  const lines = content.split('\n');
+  const elements: React.ReactNode[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const nextLine = lines[i + 1];
+    const isLast = i === lines.length - 1;
+
+    // Check for heading patterns
+    if (/^#{1,6}\s/.test(line)) {
+      elements.push(<h1 key={i} className="text-lg font-semibold text-zinc-100 mt-4 mb-2">{line.replace(/^#{1,6}\s/, '')}</h1>);
+    }
+    // Check for bullet points
+    else if (/^[\s]*[-*]\s/.test(line)) {
+      elements.push(
+        <div key={i} className="flex items-start gap-2 py-1">
+          <span className="text-zinc-500">•</span>
+          <span className="text-zinc-200">{line.replace(/^[\s]*[-*]\s/, '')}</span>
+        </div>
+      );
+    }
+    // Check for numbered list
+    else if (/^\d+[.):]\s/.test(line)) {
+      elements.push(
+        <div key={i} className="flex items-start gap-2 py-1">
+          <span className="text-zinc-500 shrink-0">{line.match(/^\d+[.):]/)?.[0]}</span>
+          <span className="text-zinc-200">{line.replace(/^\d+[.):]\s/, '')}</span>
+        </div>
+      );
+    }
+    // Check for code blocks
+    else if (line.startsWith('```')) {
+      const codeLines: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !lines[j].startsWith('```')) {
+        codeLines.push(lines[j]);
+        j++;
+      }
+      elements.push(
+        <pre key={i} className="my-3 overflow-hidden rounded-xl border border-white/10 bg-zinc-950">
+          <code className="block p-4 text-[13px] text-zinc-300">{codeLines.join('\n')}</code>
+        </pre>
+      );
+      i = j;
+    }
+    // Check for horizontal rule
+    else if (/^[-*_]{3,}$/.test(line.trim())) {
+      elements.push(<hr key={i} className="my-4 border-white/10" />);
+    }
+    // Check for blockquote
+    else if (line.startsWith('>')) {
+      elements.push(<blockquote key={i} className="border-l-2 border-violet-500 pl-3 italic text-zinc-300 my-2">{line.replace(/^>\s*/, '')}</blockquote>);
+    }
+    // Check for bold/italic text markers
+    else if (/\*\*|__|\*|_/.test(line)) {
+      elements.push(
+        <div key={i} className="text-zinc-200">
+          {parseInlineMarkdown(line)}
+        </div>
+      );
+    }
+    // Empty line check - add spacing
+    else if (!line.trim()) {
+      if (!isLast && nextLine?.trim()) {
+        elements.push(<div key={i} className="h-2" />);
+      }
+    }
+    // Regular paragraph
+    else {
+      elements.push(<p key={i} className="text-zinc-200 leading-relaxed">{line}</p>);
+    }
+  }
+
+  return <div className="space-y-1">{elements}</div>;
+}
+
+// Helper to parse inline markdown (bold, italic, code)
+function parseInlineMarkdown(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining) {
+    // Bold: **text** or __text__
+    const boldMatch = remaining.match(/\*\*(.+?)\*\*/) || remaining.match(/__(.+?)__/);
+    // Italic: *text* or _text_ (not already captured by bold)
+    const italicMatch = remaining.match(/\*(.+?)\*/) || remaining.match(/_(.+?)_/);
+    // Inline code: `code`
+    const codeMatch = remaining.match(/`(.+?)`/);
+
+    if (boldMatch && (!italicMatch || boldMatch.index! <= italicMatch.index!)) {
+      if (boldMatch.index! > 0) {
+        parts.push(<span key={key++}>{remaining.slice(0, boldMatch.index!)}</span>);
+      }
+      parts.push(<strong key={key++} className="font-semibold text-zinc-100">{boldMatch[1]}</strong>);
+      remaining = remaining.slice(boldMatch.index! + boldMatch[0].length);
+    } else if (italicMatch) {
+      if (italicMatch.index! > 0) {
+        parts.push(<span key={key++}>{remaining.slice(0, italicMatch.index!)}</span>);
+      }
+      parts.push(<em key={key++} className="italic text-zinc-300">{italicMatch[1]}</em>);
+      remaining = remaining.slice(italicMatch.index! + italicMatch[0].length);
+    } else if (codeMatch) {
+      if (codeMatch.index! > 0) {
+        parts.push(<span key={key++}>{remaining.slice(0, codeMatch.index!)}</span>);
+      }
+      parts.push(<code key={key++} className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[12px] text-violet-300">{codeMatch[1]}</code>);
+      remaining = remaining.slice(codeMatch.index! + codeMatch[0].length);
+    } else {
+      parts.push(<span key={key++}>{remaining}</span>);
+      break;
+    }
+  }
+
+  return <>{parts}</>;
 }
 
 // ============ Helper Functions ============
