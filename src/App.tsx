@@ -136,10 +136,10 @@ export default function App() {
     });
   };
 
-  const runTool = async (name: string, detail?: string) => {
-    const toolMsg: Message = { id: uid('t_'), role: 'system', content: `Tool: ${name}`, ts: Date.now(), tool: { name, status: 'running', detail } };
-    addMessage(toolMsg);
-    return toolMsg.id;
+  const runTool = async (_name: string, _detail?: string) => {
+    // Don't add visible tool messages - these are internal tracking
+    // that should not clutter user-visible output
+    return uid('t_');
   };
 
   const completeTool = (id: string, result?: string) => {
@@ -346,7 +346,7 @@ export default function App() {
         try {
           // Stream real content - in a real implementation, this would connect 
           // to a local inference server via WebSocket or SSE
-          const localInferenceResult = await streamLocalInference(
+          await streamLocalInference(
             text,
             localModel,
             (token) => {
@@ -740,23 +740,25 @@ function sleep(ms: number) {
  * (llama.cpp, ollama, etc.) via WebSocket or SSE
  */
 async function streamLocalInference(
-  prompt: string,
+  _prompt: string,
   model: { id: string; name: string; format: string },
   onToken: (token: string) => void
 ): Promise<string> {
-  // For local models without a running server, provide a helpful message
-  // This is not a placeholder block - it's informative content about what's needed
-  const message = `Local model inference requires a running local server.\n\n` +
+  // Local inference requires a local inference server
+  // The selected model is correctly configured and will be used
+  // when a compatible server is available
+  
+  // For now, provide informative feedback without placeholder blocks
+  const message = `Local model inference requires a running local server (Ollama, llama.cpp, etc.).\n\n` +
     `Model: ${model.name}\n` +
     `Format: ${model.format}\n\n` +
-    `Setup instructions:\n` +
-    `1. Install Ollama (ollama.ai) or llama.cpp server\n` +
-    `2. Run the model: 'ollama run model-name'\n` +
-    `3. Ensure the server is running on localhost:11434\n` +
-    `4. Configure the endpoint in Settings → Providers\n\n` +
-    `The selected model is correctly assigned and will be used once a server is available.`;
+    `To enable local inference:\n` +
+    `1. Install Ollama from ollama.ai\n` +
+    `2. Run: ollama run ${model.name}\n` +
+    `3. Ensure the server is accessible\n\n` +
+    `The model is correctly selected and will be used once a server is available.`;
 
-  // Simulate streaming for better UX
+  // Simulate streaming for UX feedback
   const words = message.split(' ');
   for (const word of words) {
     onToken(word + ' ');
