@@ -92,5 +92,4 @@ export interface Settings {
   providerTemplates: ProviderTemplate[];
   selectedProviderId?: string;
   selectedModelId?: string;
-  selectedMarkdownTypeId?: string;
 }

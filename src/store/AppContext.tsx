@@ -144,7 +144,6 @@ const defaultSettings: Settings = {
   providerTemplates: [pollinationsTemplate],
   selectedProviderId: 'pollinations',
   selectedModelId: 'openai',
-  selectedMarkdownTypeId: 'general',
 };
 
 const loadSettingsFromStorage = (): Settings => {
@@ -174,7 +173,6 @@ const loadSettingsFromStorage = (): Settings => {
         providerTemplates: mergedTemplates,
         selectedProviderId,
         selectedModelId: parsed.selectedModelId || selectedProvider?.models?.[0]?.id || defaultSettings.selectedModelId,
-        selectedMarkdownTypeId: parsed.selectedMarkdownTypeId || defaultSettings.selectedMarkdownTypeId,
         apiBaseUrl: shouldUseProviderBaseUrl
           ? (selectedProvider?.apiBaseUrl || defaultSettings.apiBaseUrl)
           : parsed.apiBaseUrl,

@@ -19,7 +19,6 @@ import {
 import { Settings, ConnectionType, ModelFile, ProviderTemplate, Model } from '../types';
 import { testModel, type ModelTestResult } from '../utils/testModel';
 import { cn } from '../utils/cn';
-import { MARKDOWN_TYPES, getMarkdownTypeById } from '../utils/markdownStyles';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -295,7 +294,6 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
   };
 
   const localPassedModels = settings.localModels.filter((model) => model.testStatus === 'passed');
-  const selectedMarkdownType = getMarkdownTypeById(settings.selectedMarkdownTypeId);
 
   if (!isOpen) return null;
 
@@ -640,22 +638,14 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                 </button>
               </div>
 
-              <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                <label className="mb-2 block text-[13px] font-medium text-zinc-200">AI Markdown Output Type</label>
-                <select
-                  value={settings.selectedMarkdownTypeId || MARKDOWN_TYPES[0].id}
-                  onChange={(e) => updateSettings({ selectedMarkdownTypeId: e.target.value })}
-                  className="w-full rounded-xl border border-white/10 bg-zinc-900/50 px-4 py-2.5 text-[13px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
-                >
-                  {MARKDOWN_TYPES.map((type) => (
-                    <option key={type.id} value={type.id}>
-                      {type.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-2 text-[11px] text-zinc-400">{selectedMarkdownType.description}</p>
-                <p className="mt-1 text-[11px] text-zinc-500">
-                  Includes 20 markdown styles: code markdown, API reference, checklists, tutorials, troubleshooting, release notes, SOP, timeline, and more.
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+                <div className="flex items-center gap-2 text-[12px] font-medium text-violet-100">
+                  <Zap className="h-3.5 w-3.5 text-violet-400" />
+                  Auto Output Formats
+                </div>
+                <p className="mt-2 text-[11px] text-zinc-400">
+                  Output formats are automatically detected and rendered without user selection. 
+                  Supports 25+ formats including code boxes, checklists, timelines, and more.
                 </p>
               </div>
 
