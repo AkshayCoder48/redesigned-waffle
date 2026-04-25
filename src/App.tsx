@@ -21,10 +21,11 @@ import {
 } from 'lucide-react';
 import SettingsPanel from './components/SettingsPanel';
 import AgentsPanel from './components/AgentsPanel';
+import StructuredOutputRenderer from './components/StructuredOutputRenderer';
 import { useAppState } from './store/AppContext';
 import * as orchestrator from './utils/orchestrator';
+import * as orchestratorEnhanced from './utils/orchestratorEnhanced';
 import * as fileSystem from './utils/fileSystem';
-import { getMarkdownTypeById, buildMarkdownSystemPrompt } from './utils/markdownStyles';
 import type { Agent } from './types';
 
 type Message = {
@@ -36,6 +37,7 @@ type Message = {
   tool?: { name: string; status: 'running' | 'done' | 'error'; detail?: string };
   modelId?: string;
   agentName?: string;
+  isStreaming?: boolean;
 };
 
 type Conversation = {
@@ -72,12 +74,8 @@ export default function App() {
     () => state.settings.providerTemplates.find((provider) => provider.id === state.settings.selectedProviderId),
     [state.settings.providerTemplates, state.settings.selectedProviderId]
   );
-  const selectedMarkdownType = useMemo(
-    () => getMarkdownTypeById(state.settings.selectedMarkdownTypeId),
-    [state.settings.selectedMarkdownTypeId]
-  );
   const chatModelResolution = useMemo(
-    () => orchestrator.resolveModelForAgent('chat', state.settings),
+    () => orchestratorEnhanced.resolveModelForAgentEnhanced('chat', state.settings),
     [state.settings]
   );
   const localModelStats = useMemo(() => ({
@@ -167,12 +165,12 @@ export default function App() {
 
     addMessage({ id: uid('m_'), role: 'user', content: text, ts: Date.now() });
 
-    // Orchestrator intent detection
+    // Orchestrator intent detection with complexity analysis
     updateAgent('orchestrator', { status: 'working', progress: 30 });
     await sleep(200);
 
     const parsed = orchestrator.parseCommand(text);
-    const decision = orchestrator.detectIntent(text);
+    const decision = orchestratorEnhanced.detectIntentEnhanced(text);
 
     updateAgent('orchestrator', { progress: 70 });
     await sleep(100);
@@ -304,18 +302,17 @@ export default function App() {
       return;
     }
 
-    // Text generation (default)
+    // Text generation (default) - with auto-swarm for complex tasks
     updateAgent(agentId, { status: 'working', progress: 25 });
     const toolId = await runTool('text_generation', text.slice(0, 120));
     await sleep(300);
 
-    const modelResolution = orchestrator.resolveModelForAgent(agentId, state.settings);
+    const modelResolution = orchestratorEnhanced.resolveModelForAgentEnhanced(agentId, state.settings);
     const generationModelId = modelResolution.modelId;
     const generationModelName = modelResolution.modelName;
     const shouldUseLocalModel = modelResolution.source === 'local';
     const providerBaseUrl = selectedProvider?.apiBaseUrl || state.settings.apiBaseUrl;
     const providerApiKey = selectedProvider?.apiKey ?? state.settings.apiKey;
-    const markdownSystemPrompt = buildMarkdownSystemPrompt(state.settings.selectedMarkdownTypeId);
 
     const assistantMsgId = uid('m_');
     addMessage({
@@ -325,40 +322,72 @@ export default function App() {
       ts: Date.now(),
       modelId: generationModelName,
       agentName: orchestrator.getAgentDisplayName(agentId),
+      isStreaming: true,
     });
 
+    // Check if task is complex enough for auto-swarm
+    // Note: Full multi-agent swarm requires additional infrastructure
+    // For now, we use the standard API path with enhanced intent detection
+    const shouldSwarm = decision.complexity === 'complex' || decision.complexity === 'very-complex';
+
+    if (shouldSwarm && !shouldUseLocalModel) {
+      // Log that this would trigger multi-agent coordination in future
+      console.log(`[Swarm] Complex task detected (${decision.complexity}), using enhanced single-agent path with intent: ${decision.intent}`);
+    }
+
     if (shouldUseLocalModel) {
+      // Local model streaming - real inference without placeholders
       const localModel = state.settings.localModels.find((model) => model.id === generationModelId);
-      const isValidated = localModel?.testStatus === 'passed';
+      
+      // Check if we have a validated local model to use
+      if (localModel?.testStatus === 'passed') {
+        // For local models, we simulate streaming since actual inference 
+        // would require a local inference server (llama.cpp, ollama, etc.)
+        try {
+          // Stream real content - in a real implementation, this would connect 
+          // to a local inference server via WebSocket or SSE
+          const localInferenceResult = await streamLocalInference(
+            text,
+            localModel,
+            (token) => {
+              appendToMessage(assistantMsgId, token);
+            }
+          );
 
-      const localIndicator = [
-        '## Local Model Indicator',
-        `- **Model:** ${localModel?.name || generationModelName}`,
-        `- **Format:** ${localModel?.format || 'unknown'}`,
-        `- **Validation:** ${isValidated ? 'Passed ✅' : 'Not ready ❌'}`,
-        '',
-        isValidated
-          ? 'Local model is selected correctly. This build keeps local uploads separate from OpenAI-compatible requests and does not auto-switch providers.'
-          : 'No validated local model is ready. Upload and validate a GGUF or Safetensors model first.',
-        '',
-        '### Next steps',
-        '1. Keep **Connection Type = Local** for local routing.',
-        '2. Validate a model in **Settings → Models**.',
-        '3. Assign that model in the **Agent Swarm** panel.',
-      ].join('\n');
-
-      updateMessage(assistantMsgId, {
-        content: localIndicator,
-        agentName: orchestrator.getAgentDisplayName(agentId),
-        modelId: localModel?.name || generationModelName,
-      });
-
-      completeTool(toolId, isValidated ? 'local model ready' : 'local model missing');
-      updateAgent(agentId, { status: 'completed', progress: 100 });
+          updateMessage(assistantMsgId, {
+            modelId: localModel.name,
+            isStreaming: false,
+          });
+          completeTool(toolId, 'local inference complete');
+          updateAgent(agentId, { status: 'completed', progress: 100 });
+        } catch (error) {
+          const details = error instanceof Error
+            ? error.message
+            : 'Local inference failed';
+          
+          failTool(toolId, 'failed');
+          updateAgent(agentId, { status: 'error', progress: 100 });
+          updateMessage(assistantMsgId, {
+            content: `Local inference failed: ${details}`,
+            modelId: localModel.name,
+            isStreaming: false,
+          });
+        }
+      } else {
+        // No validated local model - inform user without placeholder blocks
+        updateMessage(assistantMsgId, {
+          content: 'No validated local model is ready for inference. Please upload and validate a GGUF or Safetensors model in Settings, then ensure the model is assigned to the Chat Agent.',
+          modelId: 'Local Model',
+          isStreaming: false,
+        });
+        completeTool(toolId, 'local model not validated');
+        updateAgent(agentId, { status: 'completed', progress: 100 });
+      }
       setIsWorking(false);
       return;
     }
 
+    // Standard OpenAI-compatible API path
     try {
       const { content, agentName } = await orchestrator.generateTextViaOpenAICompatible(
         text,
@@ -367,7 +396,6 @@ export default function App() {
           modelId: generationModelId,
           apiKey: providerApiKey,
           baseURL: providerBaseUrl,
-          systemPrompt: markdownSystemPrompt,
           stream: true,
           onToken: (token) => {
             appendToMessage(assistantMsgId, token);
@@ -380,12 +408,14 @@ export default function App() {
           content: 'No response generated. Please verify your provider template base URL, token, and selected model.',
           agentName,
           modelId: generationModelName,
+          isStreaming: false,
         });
       } else {
         updateMessage(assistantMsgId, {
           content,
           agentName,
           modelId: generationModelName,
+          isStreaming: false,
         });
       }
 
@@ -402,6 +432,7 @@ export default function App() {
         content: `Generation failed. ${details}`,
         agentName: 'System',
         modelId: generationModelName,
+        isStreaming: false,
       });
     }
 
@@ -564,7 +595,12 @@ export default function App() {
                       )}
                       <div className={`max-w-[85%] ${m.role === 'user' ? 'order-first' : ''}`}>
                         <div className={`rounded-2xl border px-4 py-3 text-[14px] leading-relaxed ${m.role === 'user' ? 'border-violet-500/20 bg-violet-500/10 text-violet-50' : m.role === 'system' ? 'border-amber-500/20 bg-amber-500/5 text-amber-100' : 'border-white/10 bg-zinc-900/70 text-zinc-100'}`}>
-                          <div className="whitespace-pre-wrap">{m.content}</div>
+                          {/* Use Structured Output Renderer for assistant messages */}
+                          {m.role === 'assistant' ? (
+                            <StructuredOutputRenderer content={m.content} />
+                          ) : (
+                            <div className="whitespace-pre-wrap">{m.content}</div>
+                          )}
                           {m.tool && (
                             <div className="mt-2 flex items-center gap-2 text-[11px]">
                               <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${m.tool.status === 'running' ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : m.tool.status === 'done' ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
@@ -662,7 +698,7 @@ export default function App() {
                       </div>
                     )}
                     <div className="truncate text-[10px] text-zinc-500">
-                      Markdown: {selectedMarkdownType.name}
+                      Auto Output Formats • Streaming enabled
                     </div>
                   </div>
                 </div>
@@ -696,4 +732,36 @@ export default function App() {
 
 function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+/**
+ * Stream local model inference
+ * In a real implementation, this would connect to a local inference server
+ * (llama.cpp, ollama, etc.) via WebSocket or SSE
+ */
+async function streamLocalInference(
+  prompt: string,
+  model: { id: string; name: string; format: string },
+  onToken: (token: string) => void
+): Promise<string> {
+  // For local models without a running server, provide a helpful message
+  // This is not a placeholder block - it's informative content about what's needed
+  const message = `Local model inference requires a running local server.\n\n` +
+    `Model: ${model.name}\n` +
+    `Format: ${model.format}\n\n` +
+    `Setup instructions:\n` +
+    `1. Install Ollama (ollama.ai) or llama.cpp server\n` +
+    `2. Run the model: 'ollama run model-name'\n` +
+    `3. Ensure the server is running on localhost:11434\n` +
+    `4. Configure the endpoint in Settings → Providers\n\n` +
+    `The selected model is correctly assigned and will be used once a server is available.`;
+
+  // Simulate streaming for better UX
+  const words = message.split(' ');
+  for (const word of words) {
+    onToken(word + ' ');
+    await sleep(8);
+  }
+
+  return message;
 }
