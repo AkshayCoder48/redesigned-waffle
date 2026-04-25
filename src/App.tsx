@@ -199,10 +199,23 @@ export default function App() {
     // Don't block rendering - initialize asynchronously
     initWebContainer();
     
-    // Mark as ready after a short delay
-    setTimeout(() => {
+    // Mark as ready after a short delay with safety fallback
+    const readyTimeout = setTimeout(() => {
       setIsAppReady(true);
     }, 50);
+    
+    // Safety fallback in case something gets stuck
+    const safetyTimeout = setTimeout(() => {
+      if (!isAppReady) {
+        console.warn('[App] Safety fallback: forcing app ready state');
+        setIsAppReady(true);
+      }
+    }, 5000);
+    
+    return () => {
+      clearTimeout(readyTimeout);
+      clearTimeout(safetyTimeout);
+    };
   }, []);
 
   // Watch target agent
