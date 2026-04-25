@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Brain,
   Send,
@@ -13,13 +13,22 @@ import {
   Network,
   Bot,
   Terminal,
-  FolderTree,
   History,
   Trash2,
   Download,
   Settings as SettingsIcon,
-  AlertCircle,
-  Lock,
+  Eye,
+  Play,
+  Square,
+  RefreshCw,
+  Zap,
+  Moon,
+  CheckCircle2,
+  AlertTriangle,
+  ListTodo,
+  Activity,
+  Loader2,
+  X,
 } from 'lucide-react';
 import SettingsPanel from './components/SettingsPanel';
 import AgentsPanel from './components/AgentsPanel';
@@ -52,6 +61,9 @@ type Message = {
   error?: string;
 };
 
+type WebContainerStatus = 'idle' | 'starting' | 'running' | 'stopped' | 'error';
+type WatchTarget = 'none' | string;
+
 type Conversation = {
   id: string;
   title: string;
@@ -60,6 +72,15 @@ type Conversation = {
 };
 
 const uid = (p = '') => `${p}${Math.random().toString(36).slice(2, 9)}`;
+
+// Thinking bar animation
+const THINKING_PHRASES = [
+  'Analyzing request...',
+  'Processing...',
+  'Thinking...',
+  'Coordinating agents...',
+  'Generating response...',
+];
 
 export default function App() {
   const { state, dispatch } = useAppState();
@@ -102,6 +123,23 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Thinking bar state
+  const [showThinkingBar, setShowThinkingBar] = useState(false);
+  const [thinkingPhrase, setThinkingPhrase] = useState(THINKING_PHRASES[0]);
+  const [streamingStarted, setStreamingStarted] = useState(false);
+
+  // Activity panel state
+  const [activityPanelMode, setActivityPanelMode] = useState<'activity' | 'tasks'>('activity');
+  const [watchTarget, setWatchTarget] = useState<WatchTarget>('none');
+  const [watchedAgent, setWatchedAgent] = useState<string | null>(null);
+
+  // WebContainer state
+  const [webContainerStatus, setWebContainerStatus] = useState<WebContainerStatus>('idle');
+  const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewPort, setPreviewPort] = useState<number | null>(null);
+  const webContainerRef = useRef<any>(null);
+
   useEffect(() => {
     localStorage.setItem('ai-maos-convos', JSON.stringify(convos));
   }, [convos]);
@@ -109,6 +147,133 @@ export default function App() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [active?.messages.length]);
+
+  // Thinking bar phrase rotation
+  useEffect(() => {
+    if (!showThinkingBar) return;
+    let index = 0;
+    const interval = setInterval(() => {
+      index = (index + 1) % THINKING_PHRASES.length;
+      setThinkingPhrase(THINKING_PHRASES[index]);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [showThinkingBar]);
+
+  // Initialize WebContainer
+  useEffect(() => {
+    const initWebContainer = async () => {
+      try {
+        const { WebContainer } = await import('@webcontainer/api');
+        const instance = await WebContainer.boot();
+        webContainerRef.current = instance;
+        setTerminalOutput(prev => [...prev, 'WebContainer initialized']);
+      } catch (error) {
+        // WebContainer not available in non-browser environments
+        setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
+      }
+    };
+    initWebContainer();
+  }, []);
+
+  // Watch target agent
+  const handleWatchAgent = useCallback((agentId: string) => {
+    const agent = state.agents.find(a => a.id === agentId);
+    if (!agent) return;
+
+    if (agent.status === 'idle' || agent.status === 'sleeping') {
+      setWatchTarget(agentId);
+      setWatchedAgent(agent.name);
+    } else {
+      setWatchTarget(agentId);
+      setWatchedAgent(agent.name);
+    }
+  }, [state.agents]);
+
+  const handleStopWatch = useCallback(() => {
+    setWatchTarget('none');
+    setWatchedAgent(null);
+  }, []);
+
+  // WebContainer terminal helpers
+  const handleRunProject = useCallback(async () => {
+    if (!webContainerRef.current) {
+      setTerminalOutput(prev => [...prev, 'Error: WebContainer not available']);
+      return;
+    }
+
+    setWebContainerStatus('starting');
+    setTerminalOutput(prev => [...prev, 'Starting project...']);
+
+    try {
+      // Mount a basic project if needed
+      await webContainerRef.current.mount({
+        'package.json': {
+          file: {
+            contents: JSON.stringify({ name: 'ai-project', scripts: { dev: 'vite' } }),
+          },
+        },
+      });
+
+      const install = await webContainerRef.current.spawn('npm', ['install']);
+      install.output.pipeTo(new WritableStream({
+        write(chunk) {
+          setTerminalOutput(prev => [...prev, chunk]);
+        },
+      }));
+
+      const exitCode = await install.exit;
+      if (exitCode !== 0) {
+        setTerminalOutput(prev => [...prev, `npm install failed with code ${exitCode}`]);
+        setWebContainerStatus('error');
+        return;
+      }
+
+      setWebContainerStatus('running');
+      setTerminalOutput(prev => [...prev, 'Project ready. Starting dev server...']);
+
+      const devProcess = await webContainerRef.current.spawn('npm', ['run', 'dev']);
+
+      devProcess.output.pipeTo(new WritableStream({
+        write(chunk) {
+          setTerminalOutput(prev => [...prev, chunk]);
+          // Detect port
+          const portMatch = chunk.match(/localhost:(\d+)/);
+          if (portMatch && !previewPort) {
+            const port = parseInt(portMatch[1]);
+            setPreviewPort(port);
+            setPreviewUrl(`http://localhost:${port}`);
+            setTerminalOutput(prev => [...prev, `Preview available at http://localhost:${port}`]);
+          }
+        },
+      }));
+    } catch (error) {
+      setTerminalOutput(prev => [...prev, `Error: ${error}`]);
+      setWebContainerStatus('error');
+    }
+  }, [previewPort]);
+
+  const handleStopProject = useCallback(async () => {
+    if (webContainerRef.current) {
+      try {
+        webContainerRef.current.process?.kill?.();
+      } catch {}
+    }
+    setWebContainerStatus('stopped');
+    setTerminalOutput(prev => [...prev, 'Project stopped']);
+    setPreviewUrl(null);
+    setPreviewPort(null);
+  }, []);
+
+  const handleClearTerminal = useCallback(() => {
+    setTerminalOutput([]);
+  }, []);
+
+  const handleRefreshPreview = useCallback(() => {
+    if (previewUrl) {
+      setPreviewUrl(null);
+      setTimeout(() => setPreviewUrl(`http://localhost:${previewPort}`), 100);
+    }
+  }, [previewUrl, previewPort]);
 
   // Initialize file system on mount
   useEffect(() => {
@@ -254,6 +419,10 @@ export default function App() {
     setIsWorking(true);
     resetAgents();
 
+    // Show thinking bar
+    setShowThinkingBar(true);
+    setStreamingStarted(false);
+
     addMessage({ id: uid('m_'), role: 'user', content: text, ts: Date.now() });
 
     // Orchestrator intent detection with complexity analysis
@@ -285,6 +454,7 @@ export default function App() {
 • /models — list uploaded models
 Natural language also works: "generate an image of...", "create a video...", "speak: hello"`, ts: Date.now() });
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
@@ -298,6 +468,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
           addMessage({ id: uid('m_'), role: 'assistant', content: `Error listing files: ${error}`, ts: Date.now() });
         }
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
@@ -312,6 +483,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
           }
         }
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
@@ -331,6 +503,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
           addMessage({ id: uid('m_'), role: 'assistant', content: 'Usage: /write /path/file.txt::content', ts: Date.now() });
         }
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
@@ -345,18 +518,21 @@ Natural language also works: "generate an image of...", "create a video...", "sp
           }
         }
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
       if (command === 'agents') {
         addMessage({ id: uid('m_'), role: 'assistant', content: state.agents.map(a => `• ${a.name} — ${a.description || a.type}`).join('\n'), ts: Date.now() });
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
       if (command === 'models') {
         addMessage({ id: uid('m_'), role: 'assistant', content: state.settings.localModels.length ? state.settings.localModels.map(m => `• ${m.name} (${m.format}, ${(m.size/1024/1024).toFixed(1)} MB, ${m.testStatus})`).join('\n') : 'No models uploaded yet. Use Settings to upload models', ts: Date.now() });
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
     }
@@ -371,6 +547,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
       if (!routing.isAllowed && routing.routingError) {
         handleRoutingError(routing.routingError, agentId);
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
@@ -425,6 +602,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
       if (!routing.isAllowed && routing.routingError) {
         handleRoutingError(routing.routingError, agentId);
         setIsWorking(false);
+        setShowThinkingBar(false);
         return;
       }
 
@@ -484,24 +662,33 @@ Natural language also works: "generate an image of...", "create a video...", "sp
       // Log that this would trigger multi-agent coordination in future
     }
 
+    // First token received - transition from thinking bar to streaming
+    const onFirstToken = () => {
+      if (!streamingStarted) {
+        setStreamingStarted(true);
+        setShowThinkingBar(false);
+      }
+    };
+
     if (shouldUseLocalModel) {
       // Local model streaming - real inference without placeholders
       const localModel = state.settings.localModels.find((model) => model.id === generationModelId);
       
       // Check if we have a validated local model to use
       if (localModel?.testStatus === 'passed') {
-        // For local models, we simulate streaming since actual inference 
-        // would require a local inference server (llama.cpp, ollama, etc.)
-        try {
-          // Stream real content - in a real implementation, this would connect 
-          // to a local inference server via WebSocket or SSE
-          await streamLocalInference(
-            text,
-            localModel,
-            (token) => {
-              appendToMessage(assistantMsgId, token);
-            }
-          );
+        // For local models, we simulate streaming since actual inference
+                  // would require a local inference server (llama.cpp, ollama, etc.)
+                try {
+                  // Stream real content - in a real implementation, this would connect
+                  // to a local inference server via WebSocket or SSE
+                  await streamLocalInference(
+                    text,
+                    localModel,
+                    (token) => {
+                      onFirstToken();
+                      appendToMessage(assistantMsgId, token);
+                    }
+                  );
 
           updateMessage(assistantMsgId, {
             modelId: localModel.name,
@@ -533,6 +720,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
         updateAgent(agentId, { status: 'completed', progress: 100 });
       }
       setIsWorking(false);
+      setShowThinkingBar(false);
       return;
     }
 
@@ -547,6 +735,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
           baseURL: providerBaseUrl,
           stream: true,
           onToken: (token) => {
+            onFirstToken();
             appendToMessage(assistantMsgId, token);
           },
         }
@@ -586,6 +775,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
     }
 
     setIsWorking(false);
+    setShowThinkingBar(false);
   };
 
   const newChat = () => {
@@ -795,6 +985,26 @@ Natural language also works: "generate an image of...", "create a video...", "sp
                       )}
                     </div>
                   ))}
+                  {/* Thinking Bar - shown while waiting for first token */}
+                  {showThinkingBar && (
+                    <div className="flex gap-3">
+                      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-zinc-800 ring-1 ring-white/10">
+                        <Brain className="h-4 w-4 text-violet-300" />
+                      </div>
+                      <div className="max-w-[85%]">
+                        <div className="rounded-2xl border border-white/10 bg-zinc-900/70 px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex gap-1">
+                              <span className="h-2 w-2 animate-bounce rounded-full bg-violet-400" style={{ animationDelay: '0ms' }} />
+                              <span className="h-2 w-2 animate-bounce rounded-full bg-violet-400" style={{ animationDelay: '150ms' }} />
+                              <span className="h-2 w-2 animate-bounce rounded-full bg-violet-400" style={{ animationDelay: '300ms' }} />
+                            </div>
+                            <span className="text-[14px] text-zinc-300">{thinkingPhrase}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div ref={endRef} />
                 </div>
               </div>
@@ -831,26 +1041,6 @@ Natural language also works: "generate an image of...", "create a video...", "sp
                     </button>
                   </div>
                 </div>
-                <div className="mt-2 flex items-center justify-between px-1 text-[11px] text-zinc-500">
-                  <div className="flex items-center gap-3">
-                    <span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" /> WebContainer FS ready</span>
-                    <span className="inline-flex items-center gap-1"><FolderTree className="h-3 w-3" /> /src /agents /models /skills</span>
-                  </div>
-                  <div className="max-w-[320px] text-right leading-tight">
-                    {chatModelResolution.source === 'local' ? (
-                      <div className="truncate text-cyan-300">
-                        Local mode • {chatModelResolution.modelName} • {localModelStats.passed}/{localModelStats.total} validated
-                      </div>
-                    ) : (
-                      <div className="truncate">
-                        {selectedProvider?.name || 'OpenAI-compatible provider'} • {selectedProvider?.apiBaseUrl || state.settings.apiBaseUrl}
-                      </div>
-                    )}
-                    <div className="truncate text-[10px] text-zinc-500">
-                      Auto Output Formats • Streaming enabled
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -863,6 +1053,19 @@ Natural language also works: "generate an image of...", "create a video...", "sp
               agents={state.agents}
               settings={state.settings}
               onUpdateSettings={(settings) => dispatch({ type: 'SET_SETTINGS', payload: settings })}
+              tasks={state.tasks}
+              activityPanelMode={activityPanelMode}
+              onActivityPanelModeChange={setActivityPanelMode}
+              watchTarget={watchTarget}
+              onWatchAgent={handleWatchAgent}
+              onStopWatch={handleStopWatch}
+              webContainerStatus={webContainerStatus}
+              terminalOutput={terminalOutput}
+              previewUrl={previewUrl}
+              onRunProject={handleRunProject}
+              onStopProject={handleStopProject}
+              onClearTerminal={handleClearTerminal}
+              onRefreshPreview={handleRefreshPreview}
             />
           )}
 

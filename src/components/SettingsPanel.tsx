@@ -93,6 +93,16 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     return saved || 'wan';
   });
   // Text model selection - persisted independently
+  // Text local models from uploaded files
+  const [selectedTextLocalModel, setSelectedTextLocalModel] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-text-local-model');
+    return saved || '';
+  });
+  // TTS local models from uploaded files
+  const [selectedTTSLocalModel, setSelectedTTSLocalModel] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-tts-local-model');
+    return saved || '';
+  });
   const [selectedTextModel, setSelectedTextModel] = useState<string>(() => {
     const saved = localStorage.getItem('ai-maos-text-model');
     return saved || 'openai';
@@ -180,6 +190,15 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
   useMemo(() => {
     localStorage.setItem('ai-maos-text-model', selectedTextModel);
   }, [selectedTextModel]);
+
+  // Persist local model selections
+  useMemo(() => {
+    localStorage.setItem('ai-maos-text-local-model', selectedTextLocalModel);
+  }, [selectedTextLocalModel]);
+
+  useMemo(() => {
+    localStorage.setItem('ai-maos-tts-local-model', selectedTTSLocalModel);
+  }, [selectedTTSLocalModel]);
 
   const selectedProvider = useMemo(
     () => settings.providerTemplates.find((template) => template.id === settings.selectedProviderId),
@@ -576,13 +595,21 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
         setSelectedImageModel(modelId);
         break;
       case 'tts':
-        setSelectedTTSModel(modelId);
+        if (modelId.startsWith('local:')) {
+          setSelectedTTSLocalModel(modelId.replace('local:', ''));
+        } else {
+          setSelectedTTSModel(modelId);
+        }
         break;
       case 'video':
         setSelectedVideoModel(modelId);
         break;
       case 'text':
-        setSelectedTextModel(modelId);
+        if (modelId.startsWith('local:')) {
+          setSelectedTextLocalModel(modelId.replace('local:', ''));
+        } else {
+          setSelectedTextModel(modelId);
+        }
         break;
     }
   };
@@ -1260,40 +1287,77 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
               )}
 
               {activeModality === 'tts' && (
-                <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
-                    <Mic className="h-4 w-4 text-violet-400" />
-                    Text-to-Speech Settings
-                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
-                      Local / Cloud / OpenAI-compatible
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="mb-1.5 block text-[11px] text-zinc-400">TTS Model</label>
-                      <select
-                        value={selectedTTSModel}
-                        onChange={(e) => setSelectedTTSModel(e.target.value)}
-                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
-                      >
-                        {ttsModels.map(model => (
-                          <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
-                        ))}
-                      </select>
+                <div className="space-y-4">
+                  {/* Cloud TTS Models */}
+                  <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                    <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                      <Mic className="h-4 w-4 text-violet-400" />
+                      Text-to-Speech Model
+                      <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                        Cloud / OpenAI-compatible
+                      </span>
                     </div>
-                    <div>
-                      <label className="mb-1.5 block text-[11px] text-zinc-400">Voice</label>
-                      <select
-                        value={selectedTTSVoice}
-                        onChange={(e) => setSelectedTTSVoice(e.target.value)}
-                        className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
-                      >
-                        {ttsVoices.map(voice => (
-                          <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>
-                        ))}
-                      </select>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="mb-1.5 block text-[11px] text-zinc-400">TTS Model</label>
+                        <select
+                          value={selectedTTSModel}
+                          onChange={(e) => setSelectedTTSModel(e.target.value)}
+                          className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                        >
+                          {ttsModels.map(model => (
+                            <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-[11px] text-zinc-400">Voice</label>
+                        <select
+                          value={selectedTTSVoice}
+                          onChange={(e) => setSelectedTTSVoice(e.target.value)}
+                          className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                        >
+                          {ttsVoices.map(voice => (
+                            <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Local TTS Models */}
+                  {localPassedModels.length > 0 && (
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                      <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-cyan-200">
+                        <Cpu className="h-4 w-4" />
+                        Local TTS Models
+                      </div>
+                      <div className="space-y-2">
+                        {localPassedModels.map(model => (
+                          <button
+                            key={model.id}
+                            onClick={() => setSelectedTTSLocalModel(model.id)}
+                            className={cn(
+                              'flex w-full items-center justify-between rounded-lg border p-3 text-left transition',
+                              selectedTTSLocalModel === model.id
+                                ? 'border-cyan-500/30 bg-cyan-500/10'
+                                : 'border-white/10 bg-zinc-900/30 hover:bg-zinc-900/50'
+                            )}
+                          >
+                            <div>
+                              <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                              <div className="text-[10px] text-zinc-500">
+                                {(model.size / 1024 / 1024).toFixed(1)} MB • {model.format}
+                              </div>
+                            </div>
+                            {selectedTTSLocalModel === model.id && (
+                              <Check className="h-4 w-4 text-cyan-400" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1336,43 +1400,73 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
               )}
 
               {activeModality === 'text' && (
-                <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                  <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
-                    <Server className="h-4 w-4 text-violet-400" />
-                    Text Generation Model
-                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
-                      Local / Cloud / OpenAI-compatible
-                    </span>
+                <div className="space-y-4">
+                  {/* Cloud Text Models */}
+                  <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                    <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                      <Server className="h-4 w-4 text-violet-400" />
+                      Text Generation Model
+                      <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                        Cloud / OpenAI-compatible
+                      </span>
+                    </div>
+                    <div className="mb-3 text-[10px] text-zinc-500">
+                      Select a cloud or API model for text generation
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {textModels.map(model => (
+                        <button
+                          key={model.id}
+                          onClick={() => setSelectedTextModel(model.id)}
+                          className={cn(
+                            'relative rounded-lg border p-3 text-left transition',
+                            selectedTextModel === model.id
+                              ? 'border-violet-500/30 bg-violet-500/10'
+                              : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
+                          )}
+                        >
+                          <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                          <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
+                          {selectedTextModel === model.id && (
+                            <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="mb-3 text-[10px] text-zinc-500">
-                    Text generation supports local models, cloud, and OpenAI-compatible APIs
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {textModels.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => setSelectedTextModel(model.id)}
-                        className={cn(
-                          'relative rounded-lg border p-3 text-left transition',
-                          selectedTextModel === model.id
-                            ? 'border-violet-500/30 bg-violet-500/10'
-                            : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
-                        )}
-                      >
-                        <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
-                        <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
-                        {selectedTextModel === model.id && (
-                          <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  {hasValidatedLocalModels && (
-                    <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2">
-                      <div className="text-[11px] text-cyan-200">
-                        Local models available: {localPassedModels.map(m => m.name).join(', ')}
+
+                  {/* Local Text Models */}
+                  {localPassedModels.length > 0 && (
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                      <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-cyan-200">
+                        <Cpu className="h-4 w-4" />
+                        Local Text Models
                       </div>
-                      <div className="mt-1 text-[10px] text-zinc-400">
+                      <div className="space-y-2">
+                        {localPassedModels.map(model => (
+                          <button
+                            key={model.id}
+                            onClick={() => setSelectedTextLocalModel(model.id)}
+                            className={cn(
+                              'flex w-full items-center justify-between rounded-lg border p-3 text-left transition',
+                              selectedTextLocalModel === model.id
+                                ? 'border-cyan-500/30 bg-cyan-500/10'
+                                : 'border-white/10 bg-zinc-900/30 hover:bg-zinc-900/50'
+                            )}
+                          >
+                            <div>
+                              <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                              <div className="text-[10px] text-zinc-500">
+                                {(model.size / 1024 / 1024).toFixed(1)} MB • {model.format}
+                              </div>
+                            </div>
+                            {selectedTextLocalModel === model.id && (
+                              <Check className="h-4 w-4 text-cyan-400" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-[10px] text-zinc-400">
                         Switch to Local connection type to use uploaded models
                       </div>
                     </div>
