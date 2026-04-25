@@ -15,10 +15,24 @@ import {
   Plus,
   Save,
   Zap,
+  Image as ImageIcon,
+  Mic,
+  AlertCircle,
 } from 'lucide-react';
 import { Settings, ConnectionType, ModelFile, ProviderTemplate, Model } from '../types';
 import { testModel, type ModelTestResult } from '../utils/testModel';
+import { writeOPFSFromFile, type OPFSProgress, isOPFSSupported, getCapabilityWarnings, type CapabilityWarning } from '../utils/opfsStorage';
 import { cn } from '../utils/cn';
+
+type UploadStatus = 'idle' | 'uploading' | 'validating' | 'processing' | 'ready' | 'error';
+
+interface UploadState {
+  status: UploadStatus;
+  progress: number;
+  message: string;
+  fileId?: string;
+  error?: string;
+}
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -42,6 +56,72 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     models: [],
   });
   const [newModel, setNewModel] = useState<Partial<Model>>({ id: '', name: '', description: '' });
+
+  // Upload state management - real loading/progress/status states
+  const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({});
+  const [capabilityWarnings, setCapabilityWarnings] = useState<CapabilityWarning[]>([]);
+
+  // Image and TTS model selections - independent and persisted
+  const [selectedImageModel, setSelectedImageModel] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-image-model');
+    return saved || 'flux';
+  });
+  const [selectedTTSModel, setSelectedTTSModel] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-tts-model');
+    return saved || 'tts-1';
+  });
+  const [selectedTTSVoice, setSelectedTTSVoice] = useState<string>(() => {
+    const saved = localStorage.getItem('ai-maos-tts-voice');
+    return saved || 'alloy';
+  });
+
+  // Image models available in Pollinations
+  const imageModels = useMemo(() => [
+    { id: 'flux', name: 'Flux Schnell', description: 'Fast high-quality image generation' },
+    { id: 'zimage', name: 'Z-Image Turbo', description: 'Fast 6B Flux with 2x upscaling' },
+    { id: 'nanobanana', name: 'NanoBanana', description: 'Gemini 2.5 Flash Image' },
+    { id: 'nanobanana-2', name: 'NanoBanana 2', description: 'Gemini 3.1 Flash Image' },
+    { id: 'nanobanana-pro', name: 'NanoBanana Pro', description: 'Gemini 3 Pro Image (4K)' },
+    { id: 'gptimage', name: 'GPT Image 1 Mini', description: "OpenAI's image generation model" },
+    { id: 'gptimage-large', name: 'GPT Image 1.5', description: "OpenAI's advanced image generation model" },
+    { id: 'wan-image', name: 'Wan 2.7 Image', description: 'Alibaba text-to-image' },
+    { id: 'grok-imagine', name: 'Grok Imagine', description: 'xAI official image generation' },
+  ], []);
+
+  // TTS models available
+  const ttsModels = useMemo(() => [
+    { id: 'tts-1', name: 'TTS 1', description: 'Standard text-to-speech' },
+    { id: 'tts-1-hd', name: 'TTS 1 HD', description: 'High definition text-to-speech' },
+    { id: 'elevenlabs', name: 'ElevenLabs v3', description: 'Expressive voices with emotions' },
+  ], []);
+
+  // TTS voices available
+  const ttsVoices = useMemo(() => [
+    { id: 'alloy', name: 'Alloy', description: 'Neutral, balanced voice' },
+    { id: 'echo', name: 'Echo', description: 'Warm, versatile voice' },
+    { id: 'fable', name: 'Fable', description: 'Expressive, rich tone' },
+    { id: 'onyx', name: 'Onyx', description: 'Deep, authoritative voice' },
+    { id: 'nova', name: 'Nova', description: 'Bright, clear voice' },
+    { id: 'shimmer', name: 'Shimmer', description: 'Soft, gentle voice' },
+  ], []);
+
+  // Load capability warnings on mount
+  useMemo(() => {
+    getCapabilityWarnings().then(setCapabilityWarnings).catch(() => {
+      // Silently handle if OPFS is not supported
+    });
+  }, []);
+
+  // Persist image model selection
+  useMemo(() => {
+    localStorage.setItem('ai-maos-image-model', selectedImageModel);
+  }, [selectedImageModel]);
+
+  // Persist TTS model selection
+  useMemo(() => {
+    localStorage.setItem('ai-maos-tts-model', selectedTTSModel);
+    localStorage.setItem('ai-maos-tts-voice', selectedTTSVoice);
+  }, [selectedTTSModel, selectedTTSVoice]);
 
   const selectedProvider = useMemo(
     () => settings.providerTemplates.find((template) => template.id === settings.selectedProviderId),
@@ -76,7 +156,10 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    let workingModels = [...settings.localModels];
+    // Check OPFS support for large file storage
+    if (isOPFSSupported()) {
+      console.log('[Upload] Using OPFS for streaming storage');
+    }
 
     for (const file of files) {
       const ext = file.name.split('.').pop()?.toLowerCase();
@@ -85,67 +168,133 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
         continue;
       }
 
-      const url = URL.createObjectURL(file);
-      const modelFile: ModelFile = {
-        id: `model_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-        name: file.name,
-        format: ext as 'gguf' | 'safetensors',
-        size: file.size,
-        url,
-        uploadedAt: Date.now(),
-        testStatus: 'testing',
-      };
-
-      workingModels = [...workingModels, modelFile];
-      updateSettings({ localModels: workingModels });
-
-      setTestingModel(modelFile.id);
-      setTestProgress({ progress: 0, message: 'Initializing test...' });
+      const fileId = `model_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      
+      // Initialize upload state with uploading status
+      setUploadStates(prev => ({
+        ...prev,
+        [fileId]: { status: 'uploading', progress: 0, message: 'Starting upload...' },
+      }));
 
       try {
+        // Phase 1: Uploading
+        setUploadStates(prev => ({
+          ...prev,
+          [fileId]: { status: 'uploading', progress: 10, message: `Uploading ${file.name}...` },
+        }));
+
+        // Stream upload to OPFS if available
+        if (isOPFSSupported()) {
+          const opfsFile = await writeOPFSFromFile(file, 'model', undefined, (progress: OPFSProgress) => {
+            setUploadStates(prev => ({
+              ...prev,
+              [fileId]: { 
+                status: 'uploading', 
+                progress: Math.min(progress.percentage, 50), 
+                message: `Uploading: ${progress.percentage}%` 
+              },
+            }));
+          });
+          
+          // Update URL to OPFS path for future reference
+          const url = `opfs://${opfsFile.path}`;
+          addModelToSettings(file, fileId, ext as 'gguf' | 'safetensors', url);
+        } else {
+          // Fallback to regular file handling
+          const url = URL.createObjectURL(file);
+          addModelToSettings(file, fileId, ext as 'gguf' | 'safetensors', url);
+        }
+
+        // Phase 2: Validating/Processing
+        setUploadStates(prev => ({
+          ...prev,
+          [fileId]: { status: 'validating', progress: 60, message: 'Validating model format...' },
+        }));
+
+        setTestingModel(fileId);
         const result: ModelTestResult = await testModel(file, (progress, message) => {
-          setTestProgress({ progress, message });
+          setUploadStates(prev => ({
+            ...prev,
+            [fileId]: { 
+              status: progress < 100 ? 'validating' : 'processing', 
+              progress: 60 + Math.round(progress * 0.35), 
+              message 
+            },
+          }));
         });
 
-        workingModels = workingModels.map((existingModel) =>
-          existingModel.id === modelFile.id
-            ? {
-                ...existingModel,
-                testStatus: result.status,
-                testDetails: result.details || result.error,
-              }
-            : existingModel
+        // Update model with test results
+        setUploadStates(prev => ({
+          ...prev,
+          [fileId]: { 
+            status: result.status === 'passed' ? 'ready' : 'error', 
+            progress: 100, 
+            message: result.status === 'passed' ? 'Ready' : 'Validation failed',
+            error: result.error,
+          },
+        }));
+
+        // Update the model in settings with test results
+        const updatedModels = settings.localModels.map(m => 
+          m.id === fileId
+            ? { ...m, testStatus: result.status, testDetails: result.details || result.error }
+            : m
         );
+        updateSettings({ localModels: updatedModels });
 
-        updateSettings({
-          localModels: workingModels,
-          customModelId: result.status === 'passed' && settings.connectionType === 'local'
-            ? modelFile.id
-            : settings.customModelId,
-        });
+        // Clear upload state after delay
+        setTimeout(() => {
+          setUploadStates(prev => {
+            const { [fileId]: _, ...rest } = prev;
+            return rest;
+          });
+        }, 2000);
+
       } catch (error) {
-        workingModels = workingModels.map((existingModel) =>
-          existingModel.id === modelFile.id
-            ? {
-                ...existingModel,
-                testStatus: 'failed',
-                testDetails: error instanceof Error ? error.message : 'Unknown error',
-              }
-            : existingModel
-        );
-
-        updateSettings({ localModels: workingModels });
+        setUploadStates(prev => ({
+          ...prev,
+          [fileId]: { 
+            status: 'error', 
+            progress: 0, 
+            message: 'Upload failed',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+        }));
+      } finally {
+        setTestingModel(null);
       }
-
-      setTestingModel(null);
-      setTestProgress(null);
     }
 
     e.target.value = '';
   };
 
+  // Helper to add model to settings during upload
+  const addModelToSettings = (file: File, fileId: string, format: 'gguf' | 'safetensors', url: string) => {
+    const modelFile: ModelFile = {
+      id: fileId,
+      name: file.name,
+      format,
+      size: file.size,
+      url,
+      uploadedAt: Date.now(),
+      testStatus: 'testing',
+    };
+
+    // Immediately add to settings so it appears in Models tab
+    updateSettings({ 
+      localModels: [...settings.localModels, modelFile] 
+    });
+  };
+
   const handleDeleteModel = (modelId: string) => {
     if (!confirm('Are you sure you want to delete this model?')) return;
+    
+    // Revoke OPFS URL if applicable
+    const model = settings.localModels.find(m => m.id === modelId);
+    if (model?.url.startsWith('opfs://')) {
+      // Could add OPFS cleanup here if needed
+    }
+    
     updateSettings({
       localModels: settings.localModels.filter((model) => model.id !== modelId),
       customModelId: settings.customModelId === modelId ? '' : settings.customModelId,
@@ -740,12 +889,48 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
           {activeTab === 'upload' && (
             <div className="space-y-4">
+              {/* Capability Warnings */}
+              {capabilityWarnings.length > 0 && (
+                <div className="space-y-2">
+                  {capabilityWarnings.map((warning, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'flex items-start gap-3 rounded-xl border px-4 py-3',
+                        warning.severity === 'error' ? 'border-red-500/20 bg-red-500/5' :
+                        warning.severity === 'warning' ? 'border-amber-500/20 bg-amber-500/5' :
+                        'border-blue-500/20 bg-blue-500/5'
+                      )}
+                    >
+                      <AlertCircle className={cn(
+                        'mt-0.5 h-4 w-4 shrink-0',
+                        warning.severity === 'error' ? 'text-red-400' :
+                        warning.severity === 'warning' ? 'text-amber-400' :
+                        'text-blue-400'
+                      )} />
+                      <div className="text-[12px]">
+                        <div className={cn(
+                          'font-medium',
+                          warning.severity === 'error' ? 'text-red-200' :
+                          warning.severity === 'warning' ? 'text-amber-200' :
+                          'text-blue-200'
+                        )}>
+                          {warning.feature}: {warning.message}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-zinc-400">{warning.suggestion}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Upload Zone with Real Progress States */}
               <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-white/10 bg-zinc-900/30 py-12 transition hover:border-violet-500/30 hover:bg-zinc-900/50">
                 <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-500/10 ring-1 ring-violet-500/20">
                   <Upload className="h-6 w-6 text-violet-400" />
                 </div>
                 <div className="mt-3 text-[13px] font-medium text-zinc-200">Upload Model Files</div>
-                <div className="mt-1 text-[11px] text-zinc-500">GGUF and Safetensors files are supported</div>
+                <div className="mt-1 text-[11px] text-zinc-500">GGUF for LLM/TTS, Safetensors for T2I • OPFS streaming supported</div>
                 <label className="mt-4 cursor-pointer">
                   <input
                     type="file"
@@ -761,25 +946,116 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                 </label>
               </div>
 
-              {testingModel && testProgress && (
-                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
-                  <div className="mb-2 flex items-center gap-2 text-[12px] font-medium text-amber-200">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Testing Model
+              {/* Active Upload Progress States */}
+              {Object.entries(uploadStates).map(([fileId, state]) => (
+                <div
+                  key={fileId}
+                  className={cn(
+                    'rounded-xl border px-4 py-3',
+                    state.status === 'error' ? 'border-red-500/20 bg-red-500/5' :
+                    state.status === 'ready' ? 'border-cyan-500/20 bg-cyan-500/5' :
+                    'border-amber-500/20 bg-amber-500/5'
+                  )}
+                >
+                  <div className="mb-2 flex items-center justify-between text-[12px] font-medium">
+                    <div className={cn(
+                      'flex items-center gap-2',
+                      state.status === 'error' ? 'text-red-200' :
+                      state.status === 'ready' ? 'text-cyan-200' :
+                      'text-amber-200'
+                    )}>
+                      {state.status === 'uploading' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      {state.status === 'validating' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      {state.status === 'processing' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      {state.status === 'ready' && <Check className="h-3.5 w-3.5" />}
+                      {state.status === 'error' && <XIcon className="h-3.5 w-3.5" />}
+                      {state.message}
+                    </div>
+                    {state.status !== 'error' && state.status !== 'ready' && (
+                      <span className="text-[11px] text-zinc-500">{state.progress}%</span>
+                    )}
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-black/30">
                     <div
-                      className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 transition-all duration-300"
-                      style={{ width: `${testProgress.progress}%` }}
+                      className={cn(
+                        'h-full transition-all duration-300',
+                        state.status === 'error' ? 'bg-red-500' :
+                        state.status === 'ready' ? 'bg-cyan-500' :
+                        'bg-gradient-to-r from-violet-500 to-cyan-400'
+                      )}
+                      style={{ width: `${state.progress}%` }}
                     />
                   </div>
-                  <div className="mt-2 text-[11px] text-amber-100">{testProgress.message}</div>
                 </div>
-              )}
+              ))}
+
+              {/* Image Model Selection */}
+              <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                  <ImageIcon className="h-4 w-4 text-violet-400" />
+                  Image Generation Model
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {imageModels.map(model => (
+                    <button
+                      key={model.id}
+                      onClick={() => setSelectedImageModel(model.id)}
+                      className={cn(
+                        'rounded-lg border p-3 text-left transition',
+                        selectedImageModel === model.id
+                          ? 'border-violet-500/30 bg-violet-500/10'
+                          : 'border-white/5 bg-zinc-900/30 hover:bg-zinc-900/50'
+                      )}
+                    >
+                      <div className="text-[12px] font-medium text-zinc-100">{model.name}</div>
+                      <div className="mt-0.5 truncate text-[10px] text-zinc-500">{model.description}</div>
+                      {selectedImageModel === model.id && (
+                        <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-cyan-400" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* TTS Model and Voice Selection */}
+              <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+                  <Mic className="h-4 w-4 text-violet-400" />
+                  Text-to-Speech Settings
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1.5 block text-[11px] text-zinc-400">TTS Model</label>
+                    <select
+                      value={selectedTTSModel}
+                      onChange={(e) => setSelectedTTSModel(e.target.value)}
+                      className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                    >
+                      {ttsModels.map(model => (
+                        <option key={model.id} value={model.id}>{model.name} - {model.description}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] text-zinc-400">Voice</label>
+                    <select
+                      value={selectedTTSVoice}
+                      onChange={(e) => setSelectedTTSVoice(e.target.value)}
+                      className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-100 focus:border-violet-500/50 focus:outline-none"
+                    >
+                      {ttsVoices.map(voice => (
+                        <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
 
               <div className="flex items-start gap-3 rounded-xl border border-white/5 bg-zinc-900/40 px-4 py-3">
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
                 <div className="text-[12px] leading-relaxed text-zinc-400">
-                  Uploaded models are validated immediately. Use the Models tab to confirm pass/fail state, then assign validated models to agents.
+                  Models are validated immediately upon upload. Use the Models tab to confirm pass/fail state, 
+                  then assign validated models to agents. Image and TTS model selections are independent and persisted.
                 </div>
               </div>
             </div>
