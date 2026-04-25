@@ -9,6 +9,8 @@ import { Brain, Loader2 } from 'lucide-react';
 interface LoadingScreenProps {
   message?: string;
   progress?: number;
+  onTimeout?: () => void;
+  timeoutMs?: number;
 }
 
 const LOADING_PHRASES = [
@@ -18,8 +20,19 @@ const LOADING_PHRASES = [
   'Almost ready...',
 ];
 
-export function LoadingScreen({ message, progress }: LoadingScreenProps): React.ReactElement {
+export function LoadingScreen({ message, progress, onTimeout, timeoutMs = 10000 }: LoadingScreenProps): React.ReactElement {
   const [phraseIndex, setPhraseIndex] = useState(0);
+
+  useEffect(() => {
+    // Safety timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      if (onTimeout) {
+        onTimeout();
+      }
+    }, timeoutMs);
+
+    return () => clearTimeout(timeoutId);
+  }, [onTimeout, timeoutMs]);
 
   useEffect(() => {
     if (message) return;

@@ -29,6 +29,44 @@ window.addEventListener('error', (event) => {
 
 const root = createRoot(container);
 
+// Recovery attempt from stuck loading state
+let recoveryAttempts = 0;
+const MAX_RECOVERY_ATTEMPTS = 2;
+
+function attemptRecovery() {
+  recoveryAttempts++;
+  console.warn(`[Recovery] Attempt ${recoveryAttempts} to recover from stuck loading...`);
+  
+  // Force re-render the app directly, bypassing any stuck state
+  if (recoveryAttempts <= MAX_RECOVERY_ATTEMPTS) {
+    try {
+      // Try to set app ready directly
+      setReady();
+      
+      // Force a re-render by updating state
+      root.render(
+        <StrictMode>
+          <ErrorBoundary
+            fallback={
+              <LoadingScreen 
+                message="Recovering from startup issue..." 
+                timeoutMs={8000}
+                onTimeout={attemptRecovery}
+              />
+            }
+          >
+            <AppProvider>
+              <App />
+            </AppProvider>
+          </ErrorBoundary>
+        </StrictMode>
+      );
+    } catch (e) {
+      console.error('[Recovery] Failed:', e);
+    }
+  }
+}
+
 function renderApp(): void {
   logPhase('rendering', 'Rendering React app');
   
@@ -36,7 +74,11 @@ function renderApp(): void {
     <StrictMode>
       <ErrorBoundary
         fallback={
-          <LoadingScreen message="Something went wrong. Please refresh the page." />
+          <LoadingScreen 
+            message="Something went wrong. Please refresh the page." 
+            timeoutMs={8000}
+            onTimeout={attemptRecovery}
+          />
         }
       >
         <AppProvider>
