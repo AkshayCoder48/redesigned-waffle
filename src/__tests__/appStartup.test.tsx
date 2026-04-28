@@ -3,7 +3,7 @@
  * Validates that the app renders correctly without black screen issues
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import React from 'react';
 
@@ -52,6 +52,17 @@ describe('App Startup', () => {
       
       expect(container.querySelector('svg')).toBeTruthy();
     });
+
+    it('should not show recovery UI automatically', async () => {
+      const { LoadingScreen } = await import('../components/LoadingScreen');
+      render(<LoadingScreen message="Initializing AI-MAOS..." />);
+      
+      // Recovery messages should not appear
+      expect(screen.queryByText('Loading taking longer than expected')).toBeNull();
+      expect(screen.queryByText('Startup may be stuck')).toBeNull();
+      expect(screen.queryByText('Reload page')).toBeNull();
+      expect(screen.queryByText('Clear data & reload')).toBeNull();
+    });
   });
 
   describe('Error Boundary', () => {
@@ -84,7 +95,7 @@ describe('App Startup', () => {
         return <div>Recovered</div>;
       };
 
-      const wrapper = render(
+      render(
         <ErrorBoundary>
           <ToggleError />
         </ErrorBoundary>

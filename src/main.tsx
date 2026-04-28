@@ -106,11 +106,10 @@ function renderLoadingScreen(message?: string): void {
         fallback={
           <LoadingScreen 
             message="Something went wrong. Please refresh the page." 
-            timeoutMs={10000}
           />
         }
       >
-        <LoadingScreen message={message || "Initializing AI-MAOS..."} timeoutMs={10000} />
+        <LoadingScreen message={message || "Initializing AI-MAOS..."} />
       </ErrorBoundary>
     </StrictMode>
   );
@@ -128,7 +127,6 @@ function renderApp(): void {
         fallback={
           <LoadingScreen 
             message="Something went wrong. Please refresh the page." 
-            timeoutMs={10000}
           />
         }
       >

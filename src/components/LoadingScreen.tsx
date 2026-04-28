@@ -1,17 +1,15 @@
 /**
  * Loading Screen Component
  * Displayed during app startup to prevent blank screen
- * Includes guaranteed dismiss mechanism to prevent infinite loading
+ * Clean, non-blocking loading state with no recovery prompts
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Brain, Loader2, AlertCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Brain, Loader2 } from 'lucide-react';
 
 interface LoadingScreenProps {
   message?: string;
   progress?: number;
-  onTimeout?: () => void;
-  timeoutMs?: number;
 }
 
 const LOADING_PHRASES = [
@@ -22,26 +20,12 @@ const LOADING_PHRASES = [
 ];
 
 /**
- * Guaranteed loading screen that will eventually dismiss
- * even if the app is stuck or failing
+ * Clean loading screen that shows during startup
+ * No recovery prompts or timeout warnings - app continues
+ * gracefully once ready
  */
-export function LoadingScreen({ message, progress, onTimeout, timeoutMs = 10000 }: LoadingScreenProps): React.ReactElement {
+export function LoadingScreen({ message, progress }: LoadingScreenProps): React.ReactElement {
   const [phraseIndex, setPhraseIndex] = useState(0);
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    // Safety timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
-      if (onTimeout) {
-        onTimeout();
-      } else {
-        // If no timeout handler, show recovery option
-        setDismissed(true);
-      }
-    }, timeoutMs);
-
-    return () => clearTimeout(timeoutId);
-  }, [onTimeout, timeoutMs]);
 
   useEffect(() => {
     if (message) return;
@@ -53,56 +37,6 @@ export function LoadingScreen({ message, progress, onTimeout, timeoutMs = 10000 
   }, [message]);
 
   const displayMessage = message || LOADING_PHRASES[phraseIndex];
-
-  // If dismissed (timed out but no handler), show recovery UI
-  if (dismissed) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-[#030712] text-white">
-        <div className="mb-8 flex flex-col items-center">
-          <div className="relative mb-6">
-            <div className="grid h-20 w-20 place-items-center rounded-2xl bg-gradient-to-br from-violet-600 to-cyan-500 shadow-2xl shadow-violet-900/40">
-              <Brain className="h-10 w-10 text-white" />
-            </div>
-          </div>
-          <h1 className="mb-2 text-2xl font-bold tracking-tight">AI-MAOS</h1>
-          <p className="mb-8 text-sm text-zinc-500">Loading taking longer than expected</p>
-        </div>
-        
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex items-center gap-3 text-amber-400">
-            <AlertCircle className="h-5 w-5" />
-            <span className="text-sm">Startup may be stuck</span>
-          </div>
-          
-          <div className="flex gap-3">
-            <button
-              onClick={() => window.location.reload()}
-              className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
-            >
-              Reload page
-            </button>
-            <button
-              onClick={() => {
-                // Clear corrupted data and reload
-                const keys = ['ai-maos-settings', 'ai-maos-convos'];
-                try {
-                  keys.forEach(k => localStorage.removeItem(k));
-                } catch {}
-                window.location.reload();
-              }}
-              className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-300 transition hover:bg-red-500/20"
-            >
-              Clear data & reload
-            </button>
-          </div>
-        </div>
-        
-        <div className="absolute bottom-8 text-xs text-zinc-600">
-          Local-first • Privacy-focused • Open source
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#030712] text-white">
