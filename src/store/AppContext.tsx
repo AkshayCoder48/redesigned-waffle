@@ -151,36 +151,50 @@ const loadSettingsFromStorage = (): Settings => {
   try {
     const saved = localStorage.getItem('ai-maos-settings');
     if (saved) {
-      const parsed = JSON.parse(saved);
-      const mergedTemplates = (parsed.providerTemplates?.length > 0
-        ? parsed.providerTemplates
-        : defaultSettings.providerTemplates)
-        .map((template: ProviderTemplate) => ({
-          ...template,
-          apiKey: template.apiKey || '',
-          models: template.models || [],
-        }));
+      try {
+        const parsed = JSON.parse(saved);
+        
+        // Validate it's an object
+        if (typeof parsed !== 'object' || parsed === null) {
+          throw new Error('Invalid settings format');
+        }
+        
+        const mergedTemplates = (parsed.providerTemplates?.length > 0
+          ? parsed.providerTemplates
+          : defaultSettings.providerTemplates)
+          .map((template: ProviderTemplate) => ({
+            ...template,
+            apiKey: template.apiKey || '',
+            models: template.models || [],
+          }));
 
-      const selectedProviderId = parsed.selectedProviderId || defaultSettings.selectedProviderId;
-      const selectedProvider = mergedTemplates.find((template: ProviderTemplate) => template.id === selectedProviderId);
-      const shouldUseProviderBaseUrl = !parsed.apiBaseUrl || (
-        parsed.apiBaseUrl === 'https://api.openai.com/v1' && selectedProviderId === 'pollinations'
-      );
+        const selectedProviderId = parsed.selectedProviderId || defaultSettings.selectedProviderId;
+        const selectedProvider = mergedTemplates.find((template: ProviderTemplate) => template.id === selectedProviderId);
+        const shouldUseProviderBaseUrl = !parsed.apiBaseUrl || (
+          parsed.apiBaseUrl === 'https://api.openai.com/v1' && selectedProviderId === 'pollinations'
+        );
 
-      return {
-        ...defaultSettings,
-        ...parsed,
-        providerTemplates: mergedTemplates,
-        selectedProviderId,
-        selectedModelId: parsed.selectedModelId || selectedProvider?.models?.[0]?.id || defaultSettings.selectedModelId,
-        apiBaseUrl: shouldUseProviderBaseUrl
-          ? (selectedProvider?.apiBaseUrl || defaultSettings.apiBaseUrl)
-          : parsed.apiBaseUrl,
-        apiKey: selectedProvider?.apiKey ?? parsed.apiKey ?? '',
-      };
+        return {
+          ...defaultSettings,
+          ...parsed,
+          providerTemplates: mergedTemplates,
+          selectedProviderId,
+          selectedModelId: parsed.selectedModelId || selectedProvider?.models?.[0]?.id || defaultSettings.selectedModelId,
+          apiBaseUrl: shouldUseProviderBaseUrl
+            ? (selectedProvider?.apiBaseUrl || defaultSettings.apiBaseUrl)
+            : parsed.apiBaseUrl,
+          apiKey: selectedProvider?.apiKey ?? parsed.apiKey ?? '',
+        };
+      } catch (parseError) {
+        // Corrupted settings - clear and use defaults
+        console.warn('[AppContext] Corrupted settings, resetting:', parseError);
+        try {
+          localStorage.removeItem('ai-maos-settings');
+        } catch {}
+      }
     }
-  } catch (error) {
-    console.error('Error loading settings from localStorage:', error);
+  } catch (storageError) {
+    console.error('[AppContext] Error loading settings from localStorage:', storageError);
   }
   return defaultSettings;
 };

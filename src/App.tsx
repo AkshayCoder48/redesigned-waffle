@@ -91,12 +91,27 @@ export default function App() {
   const [isAppReady, setIsAppReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
+  // Safe initialization with corrupted state recovery
   const [convos, setConvos] = useState<Conversation[]>(() => {
     try {
       const saved = localStorage.getItem('ai-maos-convos');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      console.warn('[App] Failed to parse conversations from localStorage');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          // Validate it's an array
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        } catch (parseError) {
+          // Corrupted data - clear it
+          console.warn('[App] Corrupted conversation data, resetting:', parseError);
+          try {
+            localStorage.removeItem('ai-maos-convos');
+          } catch {}
+        }
+      }
+    } catch (storageError) {
+      console.warn('[App] Failed to access localStorage:', storageError);
     }
     const first: Conversation = {
       id: uid('c_'),
@@ -169,51 +184,72 @@ export default function App() {
     return () => clearInterval(interval);
   }, [showThinkingBar]);
 
-  // Initialize WebContainer - non-blocking, graceful fallback
+  // Initialize WebContainer - non-blocking, graceful fallback with timeout
   useEffect(() => {
     logPhase('webcontainer', 'Initializing WebContainer');
     
+    let isMounted = true;
+    
     const initWebContainer = async () => {
+      // Use AbortController-like pattern with timeout
+      const TIMEOUT_MS = 5000;
+      
       try {
         // Only attempt in browser environment with required APIs
         if (typeof window === 'undefined' || !window.WebContainer) {
           logPhase('webcontainer', 'WebContainer not available - standalone mode');
-          setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
+          if (isMounted) {
+            setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
+          }
           return;
         }
         
-        const { WebContainer } = await import('@webcontainer/api');
-        const instance = await WebContainer.boot();
-        webContainerRef.current = instance;
-        logPhase('webcontainer', 'WebContainer initialized');
-        setTerminalOutput(prev => [...prev, 'WebContainer initialized']);
+        // Race WebContainer boot with a timeout
+        const bootPromise = (async () => {
+          const { WebContainer } = await import('@webcontainer/api');
+          return WebContainer.boot();
+        })();
+        
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('WebContainer boot timeout')), TIMEOUT_MS);
+        });
+        
+        const instance = await Promise.race([bootPromise, timeoutPromise]);
+        
+        if (isMounted && instance) {
+          webContainerRef.current = instance;
+          logPhase('webcontainer', 'WebContainer initialized');
+          setTerminalOutput(prev => [...prev, 'WebContainer initialized']);
+        }
       } catch (error) {
-        // WebContainer not available in non-browser environments
-        // This is expected in Node.js/test environments
-        logPhase('webcontainer', 'WebContainer initialization failed - standalone mode');
-        console.warn('[WebContainer] Initialization failed:', error);
-        setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
+        // WebContainer not available or timed out
+        // This is expected in non-browser environments or when unavailable
+        if (isMounted) {
+          logPhase('webcontainer', 'WebContainer initialization failed - standalone mode');
+          console.warn('[WebContainer] Initialization failed:', error);
+          setTerminalOutput(prev => [...prev, 'WebContainer: Standalone mode (no container runtime)']);
+        }
+      } finally {
+        // Always mark app as ready after WebContainer init attempt
+        if (isMounted) {
+          setIsAppReady(true);
+        }
       }
     };
     
     // Don't block rendering - initialize asynchronously
     initWebContainer();
     
-    // Mark as ready after a short delay with safety fallback
-    const readyTimeout = setTimeout(() => {
-      setIsAppReady(true);
-    }, 50);
-    
-    // Safety fallback in case something gets stuck
+    // Safety fallback - ensure app is marked ready even if WebContainer hangs
     const safetyTimeout = setTimeout(() => {
-      if (!isAppReady) {
-        console.warn('[App] Safety fallback: forcing app ready state');
+      if (isMounted && !isAppReady) {
+        console.warn('[App] Safety fallback: forcing app ready state after WebContainer delay');
         setIsAppReady(true);
       }
-    }, 5000);
+    }, 3000);
     
     return () => {
-      clearTimeout(readyTimeout);
+      isMounted = false;
       clearTimeout(safetyTimeout);
     };
   }, []);

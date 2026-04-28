@@ -4,7 +4,7 @@
  */
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Home, Trash2 } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -16,6 +16,31 @@ interface State {
   hasError: boolean;
   error: Error | null;
   errorInfo: ErrorInfo | null;
+}
+
+// Storage keys that might need recovery
+const STORAGE_KEYS_TO_CLEAR = [
+  'ai-maos-settings',
+  'ai-maos-convos',
+  'ai-maos-image-model',
+  'ai-maos-tts-model',
+  'ai-maos-tts-voice',
+  'ai-maos-video-model',
+  'ai-maos-text-model',
+];
+
+/**
+ * Clear potentially corrupted localStorage data
+ */
+function clearCorruptedStorage(): void {
+  try {
+    for (const key of STORAGE_KEYS_TO_CLEAR) {
+      localStorage.removeItem(key);
+    }
+    console.log('[ErrorBoundary] Cleared potentially corrupted storage');
+  } catch (e) {
+    console.error('[ErrorBoundary] Failed to clear storage:', e);
+  }
 }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -42,6 +67,11 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ hasError: false, error: null, errorInfo: null });
   };
 
+  handleClearStorageAndReload = (): void => {
+    clearCorruptedStorage();
+    window.location.reload();
+  };
+
   render(): ReactNode {
     if (this.state.hasError) {
       if (this.props.fallback) {
@@ -55,7 +85,7 @@ export class ErrorBoundary extends Component<Props, State> {
               <AlertTriangle className="h-8 w-8 text-red-400" />
             </div>
             <h2 className="mb-2 text-xl font-semibold text-white">Something went wrong</h2>
-            <p className="mb-6 text-sm text-zinc-400">
+            <p className="mb-4 text-sm text-zinc-400">
               {this.state.error?.message || 'An unexpected error occurred during rendering.'}
             </p>
             
@@ -77,6 +107,13 @@ export class ErrorBoundary extends Component<Props, State> {
               >
                 <RefreshCw className="h-4 w-4" />
                 Try again
+              </button>
+              <button
+                onClick={this.handleClearStorageAndReload}
+                className="flex items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 font-medium text-red-300 transition hover:bg-red-500/20"
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear saved data & reload
               </button>
               <button
                 onClick={() => window.location.href = '/'}
