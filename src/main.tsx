@@ -5,20 +5,47 @@ import App from "./App";
 import { AppProvider } from "./store/AppContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LoadingScreen } from "./components/LoadingScreen";
-import { setPhase, setReady, setError, logPhase } from "./utils/startup";
+import { setPhase, logPhase } from "./utils/startup";
+import { confirmFirstPaint, registerFirstPaintFallback, resetFirstPaintState } from "./utils/firstPaint";
 
 // Startup tracking
 logPhase('init', 'Starting app initialization');
 
+// Find the root container - crash early with fallback if missing
 const container = document.getElementById("root");
 if (!container) {
+  // Extremely early crash - inject fallback UI directly
+  document.body.innerHTML = `
+    <div style="
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: #030712;
+      color: #f9fafb;
+      font-family: system-ui, -apple-system, sans-serif;
+    ">
+      <h1 style="font-size: 1.5rem; font-weight: 600;">Startup Failed</h1>
+      <p style="color: #9ca3af;">Root element not found</p>
+      <button onclick="window.location.reload()" style="
+        margin-top: 1rem;
+        padding: 0.5rem 1rem;
+        background: #7c3aed;
+        color: white;
+        border: none;
+        border-radius: 0.5rem;
+        cursor: pointer;
+      ">Reload</button>
+    </div>
+  `;
   throw new Error('Root element #root not found in DOM');
 }
 
 // Global error handler for unhandled promise rejections
 window.addEventListener('unhandledrejection', (event) => {
   console.error('[Unhandled Promise Rejection]', event.reason);
-  // Don't let unhandled rejections crash the app
+  // Prevent console errors from appearing but don't crash the app
   event.preventDefault();
 });
 
@@ -27,85 +54,15 @@ window.addEventListener('error', (event) => {
   console.error('[Uncaught Error]', event.error);
 });
 
-const root = createRoot(container);
+/**
+ * Create the React root
+ */
+let root: ReturnType<typeof createRoot>;
 
-// Recovery attempt from stuck loading state
-let recoveryAttempts = 0;
-const MAX_RECOVERY_ATTEMPTS = 2;
-
-function attemptRecovery() {
-  recoveryAttempts++;
-  console.warn(`[Recovery] Attempt ${recoveryAttempts} to recover from stuck loading...`);
-  
-  // Force re-render the app directly, bypassing any stuck state
-  if (recoveryAttempts <= MAX_RECOVERY_ATTEMPTS) {
-    try {
-      // Try to set app ready directly
-      setReady();
-      
-      // Force a re-render by updating state
-      root.render(
-        <StrictMode>
-          <ErrorBoundary
-            fallback={
-              <LoadingScreen 
-                message="Recovering from startup issue..." 
-                timeoutMs={8000}
-                onTimeout={attemptRecovery}
-              />
-            }
-          >
-            <AppProvider>
-              <App />
-            </AppProvider>
-          </ErrorBoundary>
-        </StrictMode>
-      );
-    } catch (e) {
-      console.error('[Recovery] Failed:', e);
-    }
-  }
-}
-
-function renderApp(): void {
-  logPhase('rendering', 'Rendering React app');
-  
-  root.render(
-    <StrictMode>
-      <ErrorBoundary
-        fallback={
-          <LoadingScreen 
-            message="Something went wrong. Please refresh the page." 
-            timeoutMs={8000}
-            onTimeout={attemptRecovery}
-          />
-        }
-      >
-        <AppProvider>
-          <App />
-        </AppProvider>
-      </ErrorBoundary>
-    </StrictMode>
-  );
-  
-  setPhase('rendering');
-  
-  // Mark as ready after a short delay to ensure first paint
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      setReady();
-    }, 100);
-  });
-}
-
-// Try to render, handle any startup errors gracefully
 try {
-  logPhase('init', 'Initializing React root');
-  renderApp();
+  root = createRoot(container);
 } catch (error) {
-  console.error('[Startup] Failed to render app:', error);
-  
-  // Show error state directly in the container
+  // Cannot create React root - show fallback
   container.innerHTML = `
     <div style="
       min-height: 100vh;
@@ -119,36 +76,147 @@ try {
       padding: 2rem;
       text-align: center;
     ">
-      <div style="
-        max-width: 400px;
-        padding: 2rem;
-        border: 1px solid rgba(239, 68, 68, 0.3);
-        border-radius: 1rem;
-        background: rgba(239, 68, 68, 0.05);
-      ">
-        <h1 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">
-          Failed to initialize
-        </h1>
-        <p style="color: #9ca3af; font-size: 0.875rem; margin-bottom: 1rem;">
-          ${error instanceof Error ? error.message : 'Unknown error occurred'}
-        </p>
-        <button
-          onclick="window.location.reload()"
-          style="
-            padding: 0.5rem 1rem;
-            background: #7c3aed;
-            color: white;
-            border: none;
-            border-radius: 0.5rem;
-            cursor: pointer;
-            font-size: 0.875rem;
-          "
-        >
-          Reload page
-        </button>
-      </div>
+      <h1 style="font-size: 1.25rem; font-weight: 600;">Failed to initialize</h1>
+      <p style="color: #9ca3af; font-size: 0.875rem; margin: 1rem 0;">
+        ${error instanceof Error ? error.message : 'Unknown error occurred'}
+      </p>
+      <button onclick="window.location.reload()" style="
+        padding: 0.5rem 1rem;
+        background: #7c3aed;
+        color: white;
+        border: none;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        font-size: 0.875rem;
+      ">Reload page</button>
     </div>
   `;
-  
-  setError(error instanceof Error ? error : new Error('Unknown startup error'));
+  throw error;
 }
+
+/**
+ * Renders the loading screen first - guaranteed to show immediately
+ */
+function renderLoadingScreen(message?: string): void {
+  logPhase('loading', 'Rendering LoadingScreen');
+  
+  root.render(
+    <StrictMode>
+      <ErrorBoundary
+        fallback={
+          <LoadingScreen 
+            message="Something went wrong. Please refresh the page." 
+            timeoutMs={10000}
+          />
+        }
+      >
+        <LoadingScreen message={message || "Initializing AI-MAOS..."} timeoutMs={10000} />
+      </ErrorBoundary>
+    </StrictMode>
+  );
+}
+
+/**
+ * Renders the actual app after loading screen
+ */
+function renderApp(): void {
+  logPhase('rendering', 'Rendering main App');
+  
+  root.render(
+    <StrictMode>
+      <ErrorBoundary
+        fallback={
+          <LoadingScreen 
+            message="Something went wrong. Please refresh the page." 
+            timeoutMs={10000}
+          />
+        }
+      >
+        <AppProvider>
+          <App />
+        </AppProvider>
+      </ErrorBoundary>
+    </StrictMode>
+  );
+
+  // Mark rendering phase complete
+  setPhase('rendering');
+  
+  // Confirm first paint after React commits
+  requestAnimationFrame(() => {
+    confirmFirstPaint();
+    
+    // After one more frame, mark as ready
+    requestAnimationFrame(() => {
+      setPhase('ready');
+    });
+  });
+}
+
+/**
+ * Guaranteed startup sequence with fallback at each stage
+ */
+async function startup(): Promise<void> {
+  // Reset first paint state
+  resetFirstPaintState();
+  
+  // Step 1: Immediately show loading screen (guaranteed paint)
+  logPhase('init', 'Rendering initial loading screen');
+  renderLoadingScreen("Initializing AI-MAOS...");
+  
+  // Step 2: Register first paint fallback - if React fails to mount,
+  // the firstPaint mechanism will ensure the loading screen stays visible
+  // with a dismiss mechanism after timeout
+  registerFirstPaintFallback(() => {
+    console.warn('[Startup] First paint fallback triggered');
+    // Force show the app even if something is stuck
+    renderApp();
+  });
+  
+  // Step 3: After a brief delay to ensure loading screen is painted,
+  // attempt to render the actual app
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Step 4: Render the main app
+  renderApp();
+}
+
+// Track startup timeout
+let startupTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Safety fallback if startup takes too long
+ */
+function startupTimeoutFallback(): void {
+  console.warn('[Startup] Startup timeout - forcing app render');
+  renderApp();
+}
+
+// Start the startup sequence
+logPhase('init', 'Starting startup sequence');
+
+// Set startup timeout as safety net (12 seconds)
+startupTimeout = setTimeout(startupTimeoutFallback, 12000);
+
+// Run startup sequence
+startup()
+  .then(() => {
+    // Clear the timeout since we completed successfully
+    if (startupTimeout) {
+      clearTimeout(startupTimeout);
+      startupTimeout = null;
+    }
+    logPhase('init', 'Startup sequence complete');
+  })
+  .catch((error) => {
+    console.error('[Startup] Startup failed:', error);
+    
+    // Clear the timeout
+    if (startupTimeout) {
+      clearTimeout(startupTimeout);
+      startupTimeout = null;
+    }
+    
+    // Render the app as a last resort - the ErrorBoundary will show if it fails
+    renderApp();
+  });
