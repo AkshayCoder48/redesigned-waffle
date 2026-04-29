@@ -102,13 +102,7 @@ function renderLoadingScreen(message?: string): void {
   
   root.render(
     <StrictMode>
-      <ErrorBoundary
-        fallback={
-          <LoadingScreen 
-            message="Something went wrong. Please refresh the page." 
-          />
-        }
-      >
+      <ErrorBoundary>
         <LoadingScreen message={message || "Initializing AI-MAOS..."} />
       </ErrorBoundary>
     </StrictMode>
@@ -123,13 +117,7 @@ function renderApp(): void {
   
   root.render(
     <StrictMode>
-      <ErrorBoundary
-        fallback={
-          <LoadingScreen 
-            message="Something went wrong. Please refresh the page." 
-          />
-        }
-      >
+      <ErrorBoundary>
         <AppProvider>
           <App />
         </AppProvider>
