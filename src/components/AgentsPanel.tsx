@@ -1,4 +1,4 @@
-import { X, Network, Brain, Cpu, Globe, ChevronRight, Info, Eye, Play, Square, RefreshCw, Zap, Moon, CheckCircle2, AlertTriangle, ListTodo, Activity, Loader2 } from 'lucide-react';
+import { X, Network, Brain, Cpu, Globe, ChevronRight, Info, Eye, Play, Square, RefreshCw, Zap, Moon, CheckCircle2, AlertTriangle, ListTodo, Activity, Loader2, Terminal } from 'lucide-react';
 import { Agent, Settings, Task } from '../types';
 import AgentModelSelector from './AgentModelSelector';
 import { cn } from '../utils/cn';
