@@ -1176,6 +1176,7 @@ Natural language also works: "generate an image of...", "create a video...", "sp
               onStopProject={handleStopProject}
               onClearTerminal={handleClearTerminal}
               onRefreshPreview={handleRefreshPreview}
+              showArtifactsPanel={true}
             />
           )}
 

@@ -38,3 +38,14 @@ coverage/
 .cache/
 .temp/
 .tmp/
+
+# Artifact storage (runtime generated)
+artifacts/
+recordings/
+
+# Browser automation artifacts
+*.png
+*.webm
+*.mp4
+screenshot-*.png
+recording-*.webm

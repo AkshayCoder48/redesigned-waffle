@@ -1,9 +1,12 @@
-import { X, Network, Brain, Cpu, Globe, ChevronRight, Info, Eye, Play, Square, RefreshCw, Zap, Moon, CheckCircle2, AlertTriangle, ListTodo, Activity, Loader2, Terminal } from 'lucide-react';
+import { X, Network, Brain, Cpu, Globe, ChevronRight, Info, Eye, Play, Square, RefreshCw, Zap, Moon, CheckCircle2, AlertTriangle, ListTodo, Activity, Loader2, Terminal, Camera, Video } from 'lucide-react';
 import { Agent, Settings, Task } from '../types';
 import AgentModelSelector from './AgentModelSelector';
 import { cn } from '../utils/cn';
 import { resolveModelForAgent } from '../utils/orchestrator';
 import { useEffect, useState, useRef } from 'react';
+import { ArtifactPanel, ArtifactBadge } from './ArtifactPanel';
+import { useArtifactEvents } from '../hooks/useArtifacts';
+import { ArtifactEvent } from '../utils/artifactTypes';
 
 interface AgentsPanelProps {
   isOpen: boolean;
@@ -24,6 +27,10 @@ interface AgentsPanelProps {
   onStopProject?: () => void;
   onClearTerminal?: () => void;
   onRefreshPreview?: () => void;
+  // Artifact support
+  showArtifactsPanel?: boolean;
+  artifactStats?: { screenshots: number; recordings: number };
+  onArtifactClick?: (artifactId: string) => void;
 }
 
 export default function AgentsPanel({
@@ -45,11 +52,21 @@ export default function AgentsPanel({
   onStopProject,
   onClearTerminal,
   onRefreshPreview,
+  showArtifactsPanel = false,
+  artifactStats,
+  onArtifactClick,
 }: AgentsPanelProps) {
   const orchestrator = agents.find(a => a.id === 'orchestrator');
   const otherAgents = agents.filter(a => a.id !== 'orchestrator');
   const terminalRef = useRef<HTMLDivElement>(null);
   const [watchedAgentName, setWatchedAgentName] = useState<string | null>(null);
+
+  // Subscribe to artifact events for realtime watch panel
+  const [recentArtifactEvents, setRecentArtifactEvents] = useState<ArtifactEvent[]>([]);
+  
+  useArtifactEvents((event) => {
+    setRecentArtifactEvents(prev => [event, ...prev].slice(0, 10));
+  });
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -249,8 +266,52 @@ export default function AgentsPanel({
                       </div>
                     </div>
                   ) : (
-                    <div className="text-[11px] text-zinc-400">
-                      Real-time activity monitoring for {watchedAgentName}
+                    <div className="space-y-2">
+                      <div className="text-[11px] text-zinc-400">
+                        Real-time activity monitoring for {watchedAgentName}
+                      </div>
+                      {/* Show recent artifact events in watch panel */}
+                      {recentArtifactEvents.length > 0 && (
+                        <div className="space-y-1.5 mt-2">
+                          <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+                            Recent Artifacts
+                          </div>
+                          {recentArtifactEvents.slice(0, 3).map((event, i) => (
+                            <div 
+                              key={`${event.artifactId}-${i}`}
+                              className={cn(
+                                'flex items-center gap-2 rounded-md px-2 py-1.5 text-[10px]',
+                                event.type.endsWith('_complete') ? 'bg-cyan-500/10 border border-cyan-500/20' :
+                                event.type.includes('_error') ? 'bg-red-500/10 border border-red-500/20' :
+                                'bg-zinc-800/50 border border-white/5'
+                              )}
+                            >
+                              {event.type === 'screenshot_start' || event.type === 'screenshot_complete' ? (
+                                <Camera className="h-3 w-3 text-violet-400" />
+                              ) : event.type === 'recording_start' || event.type === 'recording_complete' ? (
+                                <Video className="h-3 w-3 text-cyan-400" />
+                              ) : (
+                                <Activity className="h-3 w-3 text-zinc-400" />
+                              )}
+                              <span className={cn(
+                                event.type.endsWith('_complete') ? 'text-cyan-300' :
+                                event.type.includes('_error') ? 'text-red-300' :
+                                'text-zinc-300'
+                              )}>
+                                {event.type.replace(/_/g, ' ')}
+                              </span>
+                              {event.sourceContext?.url && (
+                                <span className="ml-auto truncate max-w-[80px] text-zinc-500">
+                                  {new URL(event.sourceContext.url).hostname}
+                                </span>
+                              )}
+                              {event.sourceContext?.stepName && (
+                                <span className="text-zinc-500 ml-1">{event.sourceContext.stepName}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -643,6 +704,11 @@ export default function AgentsPanel({
               <div className="text-[10px] text-zinc-500">Local Models</div>
             </div>
           </div>
+
+          {/* Artifact Panel - integrated into agents panel */}
+          {showArtifactsPanel && (
+            <ArtifactPanel isVisible={showArtifactsPanel} />
+          )}
         </div>
       </div>
     </aside>
